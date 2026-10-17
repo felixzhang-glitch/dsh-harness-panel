@@ -11,7 +11,7 @@ import {
   savePanelStateFile,
   type DisabledSkillRecord,
   type PanelState,
-} from '../src/skill-state.ts'
+} from '../src/panel-state.ts'
 
 let dir: string
 
@@ -44,7 +44,7 @@ describe('resolvePanelStatePath', () => {
 describe('parsePanelState', () => {
   it('parses valid records and skips malformed ones', () => {
     const state = parsePanelState({
-      version: 2,
+      version: 3,
       disabledSkills: [
         record('zeta'),
         { name: 'Bad_Name' },
@@ -55,7 +55,7 @@ describe('parsePanelState', () => {
       ],
     })
     expect([...state.disabledSkills.keys()]).toEqual(['zeta', 'alpha'])
-    expect(state.version).toBe(2)
+    expect(state.version).toBe(3)
   })
 
   it('drops version 1 gate records: their skills were never disabled', () => {
@@ -79,8 +79,8 @@ describe('parsePanelState', () => {
 describe('serializePanelState', () => {
   it('sorts records by name and round-trips', () => {
     const state: PanelState = {
-      version: 2,
-      disabledSkills: new Map([
+      version: 3,
+      hookToggles: new Map(), disabledSkills: new Map([
         ['zeta', record('zeta')],
         ['alpha', record('alpha')],
       ]),
@@ -90,6 +90,27 @@ describe('serializePanelState', () => {
     expect(text.indexOf('"alpha"')).toBeLessThan(text.indexOf('"zeta"'))
     const parsed = parsePanelState(JSON.parse(text))
     expect([...parsed.disabledSkills.keys()]).toEqual(['alpha', 'zeta'])
+  })
+})
+
+describe('hook toggles', () => {
+  it('round-trips a toggle with the original type', () => {
+    const state = parsePanelState({
+      version: 3,
+      hookToggles: [
+        { bridge: 'hooks-claude-code', configPath: '/h/hooks.json', event: 'UserPromptSubmit', matcher: '*', command: '/x.sh', disabledAt: 2 },
+        { bridge: 'b', configPath: '/h.json', event: 'e', matcher: null, command: 'c', originalType: 'command', disabledAt: 1 },
+        { bridge: 'bad' },
+      ],
+    })
+    expect(state.hookToggles.size).toBe(2)
+    const key = JSON.stringify(['hooks-claude-code', 'UserPromptSubmit', '*', '/x.sh'])
+    expect(state.hookToggles.get(key)?.originalType).toBeUndefined()
+    const second = [...state.hookToggles.values()].find(r => r.bridge === 'b')
+    expect(second?.originalType).toBe('command')
+    const text = serializePanelState(state)
+    expect(text).toContain('"hookToggles"')
+    expect(parsePanelState(JSON.parse(text)).hookToggles.size).toBe(2)
   })
 })
 
@@ -111,8 +132,8 @@ describe('state file', () => {
   it('round-trips the state with private permissions', async () => {
     const path = join(dir, 'state.json')
     const state: PanelState = {
-      version: 2,
-      disabledSkills: new Map([['alpha', record('alpha')]]),
+      version: 3,
+      hookToggles: new Map(), disabledSkills: new Map([['alpha', record('alpha')]]),
     }
     await savePanelStateFile(path, state)
     const loaded = loadPanelStateFile(path)

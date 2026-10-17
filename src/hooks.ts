@@ -27,12 +27,17 @@ export const HOOKS_CLAUDE_CODE_MODULE = '@deepseek-ai/dsh-hooks-claude-code'
 /** The codex hook bridge module name on loader rows. */
 export const HOOKS_CODEX_MODULE = '@deepseek-ai/dsh-hooks-codex'
 
+/** The sentinel `type` value the panel writes to turn one hook off in its file. */
+export const HOOK_PANEL_DISABLED_TYPE = 'disabled'
+
 /** One configured command hook in display form. */
 export interface HookCommandView {
   /** The shell command line, verbatim from the file (variables unexpanded). */
   readonly command: string
   /** Per-hook timeout in seconds; `null` when unset. */
   readonly timeoutSec: number | null
+  /** Whether the panel's per-hook toggle turned this command off in the file. */
+  readonly disabled: boolean
 }
 
 /** One matcher group: a `matcher` pattern plus its command hooks. */
@@ -124,7 +129,11 @@ export function parseHookFile(raw: unknown): ParsedHookFile {
         const hook = asObject(rawHook)
         if (hook === undefined) continue
         const type = typeof hook['type'] === 'string' ? hook['type'] : 'command'
-        if (type !== 'command') {
+        // The panel's per-hook toggle writes this sentinel; the bridge skips
+        // it exactly like any other non-command type, but the panel keeps it
+        // listed as a turned-off command so it can be switched back on.
+        const panelDisabled = type === HOOK_PANEL_DISABLED_TYPE
+        if (type !== 'command' && !panelDisabled) {
           skipped.push({ event, type })
           continue
         }
@@ -134,6 +143,7 @@ export function parseHookFile(raw: unknown): ParsedHookFile {
         commands.push({
           command,
           timeoutSec: typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : null,
+          disabled: panelDisabled,
         })
       }
       if (commands.length === 0) continue

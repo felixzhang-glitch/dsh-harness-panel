@@ -1,10 +1,12 @@
 /**
  * The Hooks page: hook bridge rows mounted in the profile (parsed from each
  * row's configPath file) plus conventional on-disk config locations that
- * exist but are NOT mounted into DSH. Each mounted bridge carries a native
- * start/stop switch over the shipped `pluginManager` Remote; individual
- * command entries stay read-only because the bridge reads its file once at
- * load and a command is not a loader row.
+ * exist but are NOT mounted into DSH. Every command hook carries its own
+ * switch: turning one off flips the hook's `type` to the sentinel the
+ * bridges skip (the provider's own contract) and reloads the bridge row so
+ * it takes effect immediately. The bridge row itself carries no whole-row
+ * switch — the loader's live re-enable of a row is unreliable, so the page
+ * stays at the granularity the file edit serves.
  *
  * @module dsh-harness-panel/client/HooksPage
  */
@@ -13,62 +15,30 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HookBridgeView, HooksSnapshot } from '../hooks.ts'
-import {
-  findPluginInfo,
-  moduleNameForDialect,
-  togglePluginRow,
-  type PluginInfoFace,
-  type PluginManagerRemoteFace,
-} from './plugin-manager.ts'
-import { usePluginRows } from './use-plugin-rows.ts'
-import { fetchJson, fill, type Translate } from './shared.ts'
+import { fetchJson, fill, postJson, type Translate } from './shared.ts'
 
 type ViewState =
   | { readonly status: 'loading' }
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'ready'; readonly snapshot: HooksSnapshot }
 
-/** Services the page reads, bound by the plugin's apply closure. */
-export interface HooksPageDeps {
-  /** `remote.pluginManager`; absent only when the namespace is not mounted. */
-  readonly pluginManager: PluginManagerRemoteFace | undefined
-}
-
-/** The switch state one bridge card renders. */
-interface ToggleView {
-  readonly checked: boolean
-  readonly disabled: boolean
-  readonly title: string | undefined
-  readonly onChange: (enabled: boolean) => void
-}
-
-/** Why one bridge's switch is locked, or undefined when it is addressable. */
-function switchLock(
-  rowsStatus: 'loading' | 'ready' | 'error',
-  info: PluginInfoFace | undefined,
-  t: Translate,
-): string | undefined {
-  if (rowsStatus === 'error') return t('toggleUnavailable')
-  if (rowsStatus === 'loading') return t('loading')
-  if (info === undefined) return t('toggleReadOnlyUnaddressable')
-  if (info.readOnlyReason === 'management-required') return t('toggleReadOnlyManagement')
-  if (info.readOnlyReason === 'unaddressable') return t('toggleReadOnlyUnaddressable')
-  if (info.patchId === undefined) return t('toggleReadOnlyUnaddressable')
-  return undefined
+/** The host's per-hook toggle response. */
+interface HookToggleResponse {
+  readonly reloaded: 'applied' | 'restart-required' | 'failed' | 'skipped' | 'unavailable'
 }
 
 /** One mounted bridge card. */
-function BridgeCard({ bridge, t, toggle }: {
+function BridgeCard({ bridge, t, onToggleHook, hookBusyKey }: {
   readonly bridge: HookBridgeView
   readonly t: Translate
-  readonly toggle: ToggleView
+  readonly onToggleHook: (request: { event: string; matcher: string | null; command: string; enabled: boolean }) => void
+  readonly hookBusyKey: string | null
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const eventCount = bridge.events.length
-  const hookCount = bridge.events.reduce(
-    (sum, event) => sum + event.groups.reduce((inner, group) => inner + group.hooks.length, 0),
-    0,
-  )
+  const hooks = bridge.events.flatMap(event => event.groups.flatMap(group => group.hooks))
+  const hookCount = hooks.length
+  const enabledCount = hooks.filter(hook => !hook.disabled).length
   return (
     <li className="dhp-card" data-open={open ? 'true' : undefined}>
       <div className="dhp-card-head">
@@ -83,11 +53,9 @@ function BridgeCard({ bridge, t, toggle }: {
             <span className="dhp-card-trailing">
               <span className="dhp-badge" data-tone={bridge.disabled ? 'muted' : bridge.parseError !== null ? 'error' : 'ok'}>
                 <span className="dhp-dot" />
-                {bridge.disabled
-                  ? t('statusDisabled')
-                  : bridge.parseError !== null
-                    ? t('error')
-                    : `${t(bridge.dialect === 'codex' ? 'dialectCodex' : 'dialectClaude')} · ${fill(t('hookCount'), { count: hookCount })}`}
+                {bridge.parseError !== null
+                  ? t('error')
+                  : `${t(bridge.dialect === 'codex' ? 'dialectCodex' : 'dialectClaude')} · ${enabledCount}/${hookCount}`}
               </span>
             </span>
           </span>
@@ -95,18 +63,10 @@ function BridgeCard({ bridge, t, toggle }: {
             <span className="dhp-card-sub dhp-code">{bridge.configPath}</span>
           </span>
         </button>
-        <span className="dhp-card-switch">
-          <Switch
-            checked={toggle.checked}
-            label={fill(t('hookToggle'), { name: bridge.entryId })}
-            disabled={toggle.disabled}
-            {...toggle.title === undefined ? {} : { title: toggle.title }}
-            onChange={toggle.onChange}
-          />
-        </span>
       </div>
       {open ? (
         <div className="dhp-card-details">
+          {bridge.disabled ? <p className="dhp-warn">{t('bridgeInactiveHint')}</p> : null}
           {bridge.parseError !== null ? <p className="dhp-error">{bridge.parseError}</p> : null}
           {bridge.events.map(event => (
             <div key={event.event}>
@@ -116,12 +76,26 @@ function BridgeCard({ bridge, t, toggle }: {
                   <span className="dhp-hint">
                     {t('matcherLabel')}: {group.matcher ?? t('matcherAll')}
                   </span>
-                  {group.hooks.map((hook, hookIndex) => (
-                    <span key={hookIndex} className="dhp-hook-cmd">
-                      {hook.command}
-                      {hook.timeoutSec !== null ? ` (${fill(t('timeout'), { sec: hook.timeoutSec })})` : ''}
-                    </span>
-                  ))}
+                  {group.hooks.map((hook, hookIndex) => {
+                    const key = `${bridge.entryId} ${event.event} ${group.matcher ?? ''} ${hook.command}`
+                    const busy = hookBusyKey === key
+                    return (
+                      <span key={hookIndex} className="dhp-hook-row">
+                        <span className="dhp-hook-cmd" data-off={hook.disabled ? 'true' : undefined}>
+                          {hook.command}
+                          {hook.timeoutSec !== null ? ` (${fill(t('timeout'), { sec: hook.timeoutSec })})` : ''}
+                        </span>
+                        <Switch
+                          checked={!hook.disabled}
+                          label={fill(t('hookCommandToggle'), { name: hook.command })}
+                          disabled={busy}
+                          onChange={(next) => {
+                            onToggleHook({ event: event.event, matcher: group.matcher, command: hook.command, enabled: next })
+                          }}
+                        />
+                      </span>
+                    )
+                  })}
                 </div>
               ))}
             </div>
@@ -141,13 +115,12 @@ function BridgeCard({ bridge, t, toggle }: {
 }
 
 /** The Hooks page body. */
-export function HooksPage({ t, deps }: { readonly t: Translate; readonly deps: HooksPageDeps }): JSX.Element {
+export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
-  const [busyEntry, setBusyEntry] = useState<string | null>(null)
+  const [busyHookKey, setBusyHookKey] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [toggleError, setToggleError] = useState<string | null>(null)
-  const { state: rowsState, reload: reloadRows } = usePluginRows(deps.pluginManager)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -176,8 +149,7 @@ export function HooksPage({ t, deps }: { readonly t: Translate; readonly deps: H
       if (controller.signal.aborted || !mounted.current) return
       setState({ status: 'error', message: error instanceof Error ? error.message : String(error) })
     })
-    reloadRows()
-  }, [loadSnapshot, reloadRows])
+  }, [loadSnapshot])
 
   const onRefresh = useCallback(() => {
     setRefreshing(true)
@@ -190,46 +162,39 @@ export function HooksPage({ t, deps }: { readonly t: Translate; readonly deps: H
         setState({ status: 'error', message: error instanceof Error ? error.message : String(error) })
       })
       .finally(() => { if (mounted.current) setRefreshing(false) })
-    reloadRows()
-  }, [loadSnapshot, reloadRows])
+  }, [loadSnapshot])
 
-  const onToggle = useCallback((bridge: HookBridgeView, next: boolean) => {
-    const pm = deps.pluginManager
-    if (pm === undefined || busyEntry !== null) return
-    const info = findPluginInfo(rowsState.rows, bridge.entryId, moduleNameForDialect(bridge.dialect))
-    if (info === undefined || info.readOnlyReason !== undefined || info.patchId === undefined) return
-    setBusyEntry(bridge.entryId)
+  const onToggleHook = useCallback((bridge: HookBridgeView, request: {
+    readonly event: string
+    readonly matcher: string | null
+    readonly command: string
+    readonly enabled: boolean
+  }) => {
+    if (busyHookKey !== null) return
+    const key = `${bridge.entryId} ${request.event} ${request.matcher ?? ''} ${request.command}`
+    setBusyHookKey(key)
     setNotice(null)
     setToggleError(null)
-    void togglePluginRow(pm, info, next).then(async (outcome) => {
+    void postJson<HookToggleResponse>('/harness-panel/hooks/toggle-hook', {
+      bridge: bridge.entryId,
+      event: request.event,
+      matcher: request.matcher,
+      command: request.command,
+      enabled: request.enabled,
+    }).then(async (response) => {
       if (!mounted.current) return
-      if (outcome.kind === 'failed') {
-        setToggleError(fill(t('toggleFailed'), { message: outcome.message }))
-        setBusyEntry(null)
-        return
-      }
-      if (outcome.kind === 'restart-required') setNotice(t('toggleRestartRequired'))
-      else if (outcome.kind === 'overridden') setNotice(t('toggleOverridden'))
+      if (response.reloaded === 'restart-required') setNotice(t('toggleRestartRequired'))
+      else if (response.reloaded === 'unavailable') setNotice(t('toggleOverridden'))
+      else if (response.reloaded === 'failed') setNotice(t('toggleOverridden'))
       await reloadAll()
       if (!mounted.current) return
-      setBusyEntry(null)
+      setBusyHookKey(null)
     }).catch((error: unknown) => {
       if (!mounted.current) return
       setToggleError(fill(t('toggleFailed'), { message: error instanceof Error ? error.message : String(error) }))
-      setBusyEntry(null)
+      setBusyHookKey(null)
     })
-  }, [busyEntry, deps.pluginManager, reloadAll, rowsState.rows, t])
-
-  const toggleFor = (bridge: HookBridgeView): ToggleView => {
-    const info = findPluginInfo(rowsState.rows, bridge.entryId, moduleNameForDialect(bridge.dialect))
-    const lock = switchLock(rowsState.status, info, t)
-    return {
-      checked: !bridge.disabled,
-      disabled: busyEntry !== null || rowsState.status !== 'ready' || lock !== undefined,
-      title: lock,
-      onChange: (next) => { onToggle(bridge, next) },
-    }
-  }
+  }, [busyHookKey, reloadAll, t])
 
   const discovered = state.status === 'ready' ? state.snapshot.discovered.filter(row => row.exists) : []
 
@@ -241,7 +206,6 @@ export function HooksPage({ t, deps }: { readonly t: Translate; readonly deps: H
           {refreshing ? t('refreshing') : t('refresh')}
         </button>
       </div>
-      {rowsState.status === 'error' ? <p className="dhp-hint">{t('toggleUnavailable')}</p> : null}
       {notice !== null ? <p className="dhp-hint" role="status">{notice}</p> : null}
       {toggleError !== null ? <p className="dhp-error" role="alert">{toggleError}</p> : null}
       {state.status === 'loading' ? (
@@ -265,7 +229,13 @@ export function HooksPage({ t, deps }: { readonly t: Translate; readonly deps: H
           ) : (
             <ul className="dhp-cards">
               {state.snapshot.mounted.map(bridge => (
-                <BridgeCard key={bridge.entryId} bridge={bridge} t={t} toggle={toggleFor(bridge)} />
+                <BridgeCard
+                  key={bridge.entryId}
+                  bridge={bridge}
+                  t={t}
+                  hookBusyKey={busyHookKey}
+                  onToggleHook={(request) => { onToggleHook(bridge, request) }}
+                />
               ))}
             </ul>
           )}

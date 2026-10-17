@@ -6,8 +6,11 @@
  *
  * The host half serves GET routes for MCP (`/harness-panel/mcp`,
  * `/harness-panel/mcp/probe`), hooks (`/harness-panel/hooks`), and the skill
- * toggle state (`/harness-panel/skills`), plus one write route for skill
- * toggles (`POST /harness-panel/skills/toggle`). MCP and hook bridge switches
+ * toggle state (`/harness-panel/skills`), plus write routes for skill
+ * toggles (`POST /harness-panel/skills/toggle`) and per-hook toggles
+ * (`POST /harness-panel/hooks/toggle-hook` — one hook command's `type`
+ * flipped to the sentinel the bridges skip, then the owning bridge row
+ * reloaded through the shipped pluginManager). MCP and hook bridge switches
  * do not write through this host: the browser calls the shipped
  * `pluginManager` Remote, exactly like the built-in Plugins page. A skill
  * toggle edits the skill file's frontmatter invocation keys — the
@@ -52,6 +55,13 @@ import {
   type RequestFace,
   type ResponseFace,
 } from './http.ts'
+import {
+  HookFileError,
+  disableHookFile,
+  enableHookFile,
+  parseHookToggleRequest,
+  type HookToggleRequest,
+} from './hook-file.ts'
 import { sanitizeError } from './sanitize.ts'
 import {
   SkillFileError,
@@ -62,13 +72,17 @@ import {
 } from './skill-file.ts'
 import {
   MAX_DISABLED_SKILLS,
+  MAX_HOOK_TOGGLES,
   disabledSkillRecords,
+  hookToggleKey,
+  hookToggleRecords,
   loadPanelStateFile,
   resolvePanelStatePath,
   savePanelStateFile,
   type DisabledSkillRecord,
+  type HookToggleRecord,
   type PanelState,
-} from './skill-state.ts'
+} from './panel-state.ts'
 
 export const name = 'dsh-harness-panel'
 
@@ -101,6 +115,8 @@ declare module '@deepseek-ai/cordis' {
 
 /** The loader entry shape this plugin reads (structural; no loader import). */
 interface LoaderEntryFace {
+  /** The full loader entry id, parent-prefixed; what pluginManager switches by. */
+  readonly id: string
   readonly options: {
     readonly id: string
     readonly name: string
@@ -203,7 +219,7 @@ function probeSpec(loader: HostFace['loader'], serverName: string): ProbeTarget 
 }
 
 /**
- * Mount the panel: the five routes and the upstream status observer. Skill
+ * Mount the panel: the seven routes and the upstream status observer. Skill
  * toggles edit the skill file's frontmatter directly (the provider's own
  * disable keys) and record the original lines in the state file. Every
  * registration is an effect on this fiber, so unloading removes the
@@ -311,6 +327,133 @@ export function apply(ctx: Context, config?: Config): void {
 
   ctx.effect(() => host.webServer.register({
     kind: 'exact',
+    path: '/harness-panel/hooks/toggle-hook',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+      if (!hasPanelHeader(req) || !isSameOrigin(req)) {
+        sendJson(res, 403, { error: 'forbidden' })
+        return
+      }
+      if (!isJsonContentType(req)) {
+        sendJson(res, 415, { error: 'content-type must be application/json' })
+        return
+      }
+      let parsed: HookToggleRequest | undefined
+      try {
+        parsed = parseHookToggleRequest(await readJsonBody(req))
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          sendJson(res, error.status, { error: error.message })
+          return
+        }
+        sendJson(res, 400, { error: sanitizeError(error) })
+        return
+      }
+      if (parsed === undefined) {
+        sendJson(res, 400, { error: 'invalid hook toggle request' })
+        return
+      }
+      const request = parsed
+      try {
+        // Resolve the bridge's config file and full loader entry id. The
+        // state's record keeps enable working even when the row is not
+        // currently loaded.
+        let configPath: string | undefined
+        let loaderEntryId: string | undefined
+        let rowEnabled = false
+        for (const entry of host.loader.entries()) {
+          if (dialectOf(entry.options.name) === undefined) continue
+          if (entry.options.id !== request.bridge) continue
+          const config = entry.options.config
+          const candidate = typeof config === 'object' && config !== null && !Array.isArray(config)
+            ? (config as Record<string, unknown>)['configPath']
+            : undefined
+          if (typeof candidate === 'string' && candidate !== '') configPath = candidate
+          loaderEntryId = entry.id
+          rowEnabled = !entry.disabled
+          break
+        }
+        const existing = state.hookToggles.get(hookToggleKey(request))
+        if (configPath === undefined) configPath = existing?.configPath
+        if (configPath === undefined) {
+          sendJson(res, 400, { error: `bridge "${request.bridge}" is not mounted and has no recorded config file` })
+          return
+        }
+        let reloadOutcome: 'applied' | 'restart-required' | 'failed' | 'skipped' | 'unavailable' = 'skipped'
+        const run = stateWrite.then(async () => {
+          if (request.enabled) {
+            const record = existing
+            if (record !== undefined) {
+              await enableHookFile(configPath!, request, record.originalType)
+              const next = new Map(state.hookToggles)
+              next.delete(hookToggleKey(request))
+              const nextState: PanelState = { version: 3, disabledSkills: state.disabledSkills, hookToggles: next }
+              await savePanelStateFile(statePath, nextState)
+              state = nextState
+            }
+            return
+          }
+          if (existing !== undefined) return
+          if (state.hookToggles.size >= MAX_HOOK_TOGGLES) {
+            throw new HookFileError(500, `at most ${MAX_HOOK_TOGGLES} disabled hooks are supported`)
+          }
+          // The file carries the disable; the state records the original
+          // `type` for restore.
+          const edit = await disableHookFile(configPath!, request)
+          const record: HookToggleRecord = {
+            bridge: request.bridge,
+            configPath,
+            event: request.event,
+            matcher: request.matcher,
+            command: request.command,
+            ...(edit.originalType === undefined ? {} : { originalType: edit.originalType }),
+            disabledAt: Date.now(),
+          }
+          const next = new Map(state.hookToggles)
+          next.set(hookToggleKey(request), record)
+          const nextState: PanelState = { version: 3, disabledSkills: state.disabledSkills, hookToggles: next }
+          await savePanelStateFile(statePath, nextState)
+          state = nextState
+        })
+        stateWrite = run.catch(() => {})
+        await run
+        // The bridges parse their config once at load, so the row must reload
+        // for the edit to reach the running process. A row that is currently
+        // off reads the file when the user switches it back on.
+        if (loaderEntryId !== undefined && rowEnabled) {
+          const pluginManager = ctx.get('pluginManager') as {
+            setPluginEnabled?(entryId: string, enabled: boolean): Promise<{ application: string }>
+          } | undefined
+          if (pluginManager?.setPluginEnabled === undefined) {
+            reloadOutcome = 'unavailable'
+          } else {
+            try {
+              await pluginManager.setPluginEnabled(loaderEntryId, false)
+              const result = await pluginManager.setPluginEnabled(loaderEntryId, true)
+              reloadOutcome = result.application === 'applied' || result.application === 'overridden'
+                ? 'applied'
+                : result.application === 'restart-required' ? 'restart-required' : 'failed'
+            } catch {
+              reloadOutcome = 'failed'
+            }
+          }
+        }
+        sendJson(res, 200, { hookToggles: hookToggleRecords(state), reloaded: reloadOutcome })
+      } catch (error) {
+        if (error instanceof HookFileError) {
+          sendJson(res, error.status, { error: sanitizeError(error.message) })
+          return
+        }
+        sendJson(res, 500, { error: sanitizeError(error) })
+      }
+    },
+  }), 'harness-panel: hook toggle route')
+
+  ctx.effect(() => host.webServer.register({
+    kind: 'exact',
     path: '/harness-panel/skills',
     handler: (req, res) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -371,7 +514,7 @@ export function apply(ctx: Context, config?: Config): void {
               await enableSkillFile(record.path, record.name, record.original)
               const next = new Map(state.disabledSkills)
               next.delete(request.name)
-              const nextState: PanelState = { version: 2, disabledSkills: next }
+              const nextState: PanelState = { version: 3, disabledSkills: next, hookToggles: state.hookToggles }
               await savePanelStateFile(statePath, nextState)
               state = nextState
             }
@@ -397,7 +540,7 @@ export function apply(ctx: Context, config?: Config): void {
           }
           const next = new Map(state.disabledSkills)
           next.set(request.name, record)
-          const nextState: PanelState = { version: 2, disabledSkills: next }
+          const nextState: PanelState = { version: 3, disabledSkills: next, hookToggles: state.hookToggles }
           await savePanelStateFile(statePath, nextState)
           state = nextState
         })
@@ -433,15 +576,28 @@ export {
 } from './skill-file.ts'
 export type { OriginalInvocationLines, SkillFileEdit, SkillToggleRequest } from './skill-file.ts'
 export {
+  HOOK_COMMAND_TYPE,
+  HOOK_DISABLED_TYPE,
+  HookFileError,
+  disableHookFile,
+  enableHookFile,
+  parseHookToggleRequest,
+} from './hook-file.ts'
+export type { HookEditResult, HookToggleRequest } from './hook-file.ts'
+export {
   MAX_DISABLED_SKILLS,
+  MAX_HOOK_TOGGLES,
   PANEL_STATE_VERSION,
   disabledSkillRecords,
+  hookToggleKey,
+  hookToggleRecords,
   loadPanelStateFile,
   normalizeDisabledSkill,
+  normalizeHookToggle,
   parsePanelState,
   resolvePanelStatePath,
   savePanelStateFile,
   serializePanelState,
-} from './skill-state.ts'
-export type { DisabledSkillRecord, PanelState } from './skill-state.ts'
+} from './panel-state.ts'
+export type { DisabledSkillRecord, HookToggleRecord, PanelState } from './panel-state.ts'
 export { hasPanelHeader, isJsonContentType, isSameOrigin, readJsonBody, RequestBodyError } from './http.ts'

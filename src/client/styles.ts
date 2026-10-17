@@ -424,12 +424,25 @@ const PANEL_CSS = `
   flex-direction: column;
   gap: 6px;
 }
+[data-dsh-harness-panel] .dhp-hook-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
 [data-dsh-harness-panel] .dhp-hook-cmd {
+  flex: 1;
+  min-width: 0;
   font-family: var(--ds-font-family-code);
   font-size: 12px;
   line-height: 18px;
   overflow-wrap: anywhere;
   color: var(--dsw-alias-label-primary);
+}
+[data-dsh-harness-panel] .dhp-hook-cmd[data-off='true'] {
+  color: var(--dsw-alias-label-tertiary);
+  text-decoration: line-through;
 }
 
 /* Group subheadings inside a page. */
@@ -442,6 +455,15 @@ const PANEL_CSS = `
 }
 
 /* Error and hint notes. */
+[data-dsh-harness-panel] .dhp-warn {
+  margin: 0;
+  border-radius: var(--dsw-radius-lg);
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warning-primary, var(--dsw-alias-state-error-primary)) 8%, transparent);
+  color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-secondary));
+  font-size: 12px;
+  line-height: 18px;
+}
 [data-dsh-harness-panel] .dhp-error {
   margin: 0;
   border-radius: var(--dsw-radius-lg);

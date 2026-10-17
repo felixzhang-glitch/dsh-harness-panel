@@ -24,13 +24,14 @@ export const zh = {
   // Switches
   mcpToggle: '启用或停用 {name}',
   skillToggle: '启用或停用 {name}',
-  hookToggle: '启用或停用 {name}',
+  hookCommandToggle: '启用或停用命令 {name}',
+  bridgeInactiveHint: '该 hook 桥当前未激活（被运行时禁用），其中的 hook 不会执行；重启 DSH 后按插件兼容性重新评估',
   toggleUnavailable: '插件管理不可用，无法启停',
   toggleReadOnlyManagement: '该条目由 DSH 管理，无法在此启停',
   toggleReadOnlyUnaddressable: '该条目没有可写的 profile 行，无法在此启停',
   toggleFailed: '启停失败：{message}',
   toggleRestartRequired: '已保存，重启 DSH 后生效',
-  toggleOverridden: '更改已被更高优先级的配置覆盖',
+  toggleOverridden: '已写入配置；当前进程未能即时生效，重启 DSH 后生效',
 
   // MCP page
   mcpEmpty: '没有配置 MCP 服务器',
@@ -113,13 +114,14 @@ export const en: Record<HarnessPanelLocaleKey, string> = {
 
   mcpToggle: 'Enable or disable {name}',
   skillToggle: 'Enable or disable {name}',
-  hookToggle: 'Enable or disable {name}',
+  hookCommandToggle: 'Enable or disable command {name}',
+  bridgeInactiveHint: 'This hook bridge is inactive (disabled by the runtime); its hooks do not run. Restart DSH to re-evaluate plugin compatibility.',
   toggleUnavailable: 'Plugin management is unavailable; switches are locked',
   toggleReadOnlyManagement: 'Managed by DSH; cannot be switched here',
   toggleReadOnlyUnaddressable: 'No writable profile row; cannot be switched here',
   toggleFailed: 'Switch failed: {message}',
   toggleRestartRequired: 'Saved; restart DSH to apply',
-  toggleOverridden: 'The change was overridden by a higher-priority configuration',
+  toggleOverridden: 'Saved; the running process did not pick it up live — restart DSH to apply',
 
   mcpEmpty: 'No MCP servers configured',
   mcpEmptyHint: 'Add an @deepseek-ai/dsh-mcp-client row to the profile cordis.patch.yml to connect one.',

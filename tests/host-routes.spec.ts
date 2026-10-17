@@ -51,6 +51,24 @@ function response(): { res: ResponseFace; status: () => number; body: () => stri
   }
 }
 
+const HOOKS_FILE = `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/default.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+
 const SKILL_FILE = `---
 name: alpha
 description: Alpha skill
@@ -61,7 +79,9 @@ Body.
 async function setup(): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-harness-panel-routes-'))
   const statePath = join(dir, 'state.json')
+  const hooksFile = join(dir, 'hooks.json')
   const routes = new Map<string, Handler>()
+  await writeFile(hooksFile, HOOKS_FILE, 'utf8')
 
   const ctx = new Context()
   ctx.provide('loader', {
@@ -78,6 +98,14 @@ async function setup(): Promise<Harness> {
       },
       disabled: false,
       fiber: { state: 2 },
+    }, {
+      id: 'include:hooks-claude-code',
+      options: {
+        id: 'hooks-claude-code',
+        name: '@deepseek-ai/dsh-hooks-claude-code',
+        config: { configPath: hooksFile },
+      },
+      disabled: false,
     }],
   })
   ctx.provide('tools', {
@@ -193,6 +221,74 @@ describe('host routes', () => {
       await fresh.ctx.fiber.dispose()
       await rm(dirname(fresh.statePath), { recursive: true, force: true })
     }
+  })
+
+  it('toggles one hook in the mounted bridge config and reports the reload path', async () => {
+    const hooksPath = join(harness.dir, 'hooks.json')
+    const headers = {
+      'x-harness-panel': '1',
+      'content-type': 'application/json',
+      origin: 'http://127.0.0.1:1',
+      host: '127.0.0.1:1',
+    }
+    const out = response()
+    await harness.routes.get('/harness-panel/hooks/toggle-hook')!(
+      postRequest([JSON.stringify({
+        bridge: 'hooks-claude-code',
+        event: 'PreToolUse',
+        matcher: 'Bash',
+        command: '/default.sh',
+        enabled: false,
+      })], headers),
+      out.res,
+    )
+    expect(out.status()).toBe(200)
+    const body = JSON.parse(out.body()) as { reloaded: string; hookToggles: Array<{ command: string }> }
+    expect(body.reloaded).toBe('unavailable')
+    expect(body.hookToggles).toMatchObject([{ command: '/default.sh' }])
+    const text = await readFile(hooksPath, 'utf8')
+    expect(text).toContain('"type": "disabled"')
+    expect(text).toContain('"command": "/default.sh"')
+
+    // The snapshot lists the turned-off hook with its disabled flag.
+    const snapshot = response()
+    await harness.routes.get('/harness-panel/hooks')!(request([], headers), snapshot.res)
+    expect(snapshot.status()).toBe(200)
+    const parsed = JSON.parse(snapshot.body()) as { mounted: Array<{ events: Array<{ groups: Array<{ hooks: Array<{ command: string; disabled: boolean }> }> }> }> }
+    expect(parsed.mounted[0]!.events[0]!.groups[0]!.hooks[0]).toMatchObject({ command: '/default.sh', disabled: true })
+
+    const enable = response()
+    await harness.routes.get('/harness-panel/hooks/toggle-hook')!(
+      postRequest([JSON.stringify({
+        bridge: 'hooks-claude-code',
+        event: 'PreToolUse',
+        matcher: 'Bash',
+        command: '/default.sh',
+        enabled: true,
+      })], headers),
+      enable.res,
+    )
+    expect(enable.status()).toBe(200)
+    expect(JSON.parse(enable.body())).toMatchObject({ hookToggles: [] })
+    expect(await readFile(hooksPath, 'utf8')).not.toContain('"disabled"')
+  })
+
+  it('refuses a hook toggle for an unmounted bridge without a record', async () => {
+    const out = response()
+    await harness.routes.get('/harness-panel/hooks/toggle-hook')!(
+      postRequest([JSON.stringify({
+        bridge: 'no-such-bridge',
+        event: 'Stop',
+        matcher: null,
+        command: 'x',
+        enabled: false,
+      })], {
+        'x-harness-panel': '1',
+        'content-type': 'application/json',
+      }),
+      out.res,
+    )
+    expect(out.status()).toBe(400)
   })
 
   it('refuses a write without the panel header', async () => {

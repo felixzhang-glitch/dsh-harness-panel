@@ -98,7 +98,7 @@ export function HarnessSection({ t, deps }: {
           >
             {page.id === 'mcp' ? <McpPage t={t} deps={{ pluginManager: deps.pluginManager }} />
               : page.id === 'skills' ? <SkillsPage t={t} deps={deps.skills} />
-              : <HooksPage t={t} deps={{ pluginManager: deps.pluginManager }} />}
+              : <HooksPage t={t} />}
           </div>
         )
       })}

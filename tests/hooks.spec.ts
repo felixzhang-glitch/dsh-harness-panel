@@ -22,7 +22,7 @@ describe('parseHookFile', () => {
     expect(parsed.events).toHaveLength(1)
     expect(parsed.events[0]!.event).toBe('PreToolUse')
     expect(parsed.events[0]!.groups[0]!.matcher).toBe('Bash')
-    expect(parsed.events[0]!.groups[0]!.hooks[0]).toEqual({ command: 'echo hi', timeoutSec: 30 })
+    expect(parsed.events[0]!.groups[0]!.hooks[0]).toEqual({ command: 'echo hi', timeoutSec: 30, disabled: false })
   })
 
   it('parses a bare event map', () => {
@@ -32,6 +32,14 @@ describe('parseHookFile', () => {
     expect(parsed.events[0]!.event).toBe('Stop')
     expect(parsed.events[0]!.groups[0]!.matcher).toBeNull()
     expect(parsed.events[0]!.groups[0]!.hooks[0]!.timeoutSec).toBeNull()
+  })
+
+  it('keeps the panel-disabled sentinel as a turned-off command', () => {
+    const parsed = parseHookFile({
+      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'disabled', command: '/x.sh' }] }],
+    })
+    expect(parsed.skipped).toEqual([])
+    expect(parsed.events[0]!.groups[0]!.hooks[0]).toEqual({ command: '/x.sh', timeoutSec: null, disabled: true })
   })
 
   it('collects non-command hooks as skipped', () => {

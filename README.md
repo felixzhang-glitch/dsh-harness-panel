@@ -22,7 +22,7 @@ English · [中文](#中文)
 **Hooks**
 
 - Mounted hook bridges (`@deepseek-ai/dsh-hooks-claude-code` / `@deepseek-ai/dsh-hooks-codex`): each row's `configPath` file parsed into event → matcher → command views
-- A native start/stop switch per mounted bridge, through the shipped `pluginManager` Remote; individual commands stay read-only because the bridge reads its file once at load
+- A per-command switch inside each expanded group: turning one hook off flips its `type` to the sentinel the bridges skip, records the original value, and reloads the bridge row so it takes effect immediately. The bridge row itself deliberately carries no whole-row switch — the loader's live re-enable of a row is unreliable, so the page stays at the granularity the file edit serves
 - Conventional on-disk locations (`~/.claude/settings.json`, `~/.codex/hooks.json`, project-level, …) scanned read-only and clearly marked **not mounted**
 
 ## Design
@@ -72,7 +72,7 @@ DeepSeek Harness 设置面板插件：在设置导航中新增 **Harness** 入�
 
 - **MCP**：已配置服务器的连接状态（来自上游 `mcp/status` 事件，无观察时如实显示未知）、传输方式、脱敏目标、工具清单，一键探活；每个可寻址行右侧有原生启停开关，停用后 mcp-client 行与其工具一起下线
 - **Skills**：当前会话可见的 skill 目录（与 `/` 菜单同源），每个 skill 右侧有原生启用/停用开关。停用直接写入该 skill SKILL.md 的官方 frontmatter 键（`user-invocable: false`、`disable-model-invocation: true`），在任何 registry scope 都生效，skill 从模型目录与 `/` 菜单消失；面板仍以关闭状态列出，重新启用时按记录还原原始行
-- **Hooks**：已挂载的 hook 桥配置解析（事件点 → 匹配器 → 命令），每个 bridge 右侧有原生启停开关；单个 command 仍只读，因为 bridge 在加载时一次性读取配置文件。本机约定路径上**未挂载**的配置文件继续只读扫描
+- **Hooks**：已挂载的 hook 桥配置解析（事件点 → 匹配器 → 命令），展开后**每条 command 有独立开关**——关闭时把该 hook 的 `type` 改为 bridge 跳过的哨兵值（provider 自身的机制），记录原始值并重载 bridge 行立即生效。bridge 整行不设总开关：loader 对整行的热恢复不可靠，面板停留在文件编辑能服务的粒度。本机约定路径上**未挂载**的配置文件继续只读扫描
 
 安全边界：MCP 与 hook 开关调用 shipped `remote.pluginManager.setPluginEnabled`，由官方 manager 写 profile 的 `cordis.patch.yml` 并 reload，与内置 Plugins 页一致；host 只新增一条 skill 开关写入路由 `POST /harness-panel/skills/toggle`，要求 JSON、`x-harness-panel: 1` 与同源 `Origin`，body 上限 16 KiB，且只改目标 SKILL.md 里两个 invocation 键（先校验文件声明的 skill name）。除这两行外，host 唯一直接写出的文件是 `$DSH_HOME/harness-panel/state.json`（默认 `~/.dsh/harness-panel/state.json`，0600），只含 skill 名称、描述、路径、停用时间与原始行记录，不含正文与凭据。路由仅监听 loopback。
 
