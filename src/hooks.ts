@@ -3,7 +3,9 @@
  * (`@deepseek-ai/dsh-hooks-claude-code` / `@deepseek-ai/dsh-hooks-codex`),
  * parse each row's `configPath` file into a display view, and scan
  * conventional on-disk locations for hook configuration that exists but is
- * NOT mounted into DSH. Read-only — no file is ever written.
+ * NOT mounted into DSH. Parsing and scanning write no file; the panel's
+ * bridge switch is a separate browser action over the shipped
+ * `pluginManager` Remote, which stops or restarts the loader row.
  *
  * The display parser is deliberately lenient: it walks any event key the
  * file carries (both dialects share the matcher-group shape), keeps command

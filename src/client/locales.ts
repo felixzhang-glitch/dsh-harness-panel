@@ -10,7 +10,7 @@
 export const zh = {
   nav: 'Harness',
   title: 'Harness',
-  intro: 'MCP 服务器、Skills 与 Hooks 的总览面板。数据只读，不修改任何配置。',
+  intro: 'MCP 服务器、Skills 与 Hooks 的统一管理面板。MCP 与 hook 桥可启停，skill 可单独停用。',
   tabMcp: 'MCP',
   tabSkills: 'Skills',
   tabHooks: 'Hooks',
@@ -20,6 +20,17 @@ export const zh = {
   loading: '加载中…',
   error: '加载失败',
   empty: '暂无数据',
+
+  // Switches
+  mcpToggle: '启用或停用 {name}',
+  skillToggle: '启用或停用 {name}',
+  hookToggle: '启用或停用 {name}',
+  toggleUnavailable: '插件管理不可用，无法启停',
+  toggleReadOnlyManagement: '该条目由 DSH 管理，无法在此启停',
+  toggleReadOnlyUnaddressable: '该条目没有可写的 profile 行，无法在此启停',
+  toggleFailed: '启停失败：{message}',
+  toggleRestartRequired: '已保存，重启 DSH 后生效',
+  toggleOverridden: '更改已被更高优先级的配置覆盖',
 
   // MCP page
   mcpEmpty: '没有配置 MCP 服务器',
@@ -60,6 +71,10 @@ export const zh = {
   skillsSearch: '搜索 skills…',
   skillModel: '模型可调用',
   skillCount: '{count} 个 skills',
+  skillDisabledCount: '{count} 个已停用',
+  skillsFileControlUnavailable: 'skill 文件停用不可用，开关已锁定',
+  skillsDisabledHint: '已停用的 skill 从其 SKILL.md 前置元数据下线，不再出现在模型目录与 / 菜单',
+  skillsToggleFailed: '无法更新 skill 状态：{message}',
 
   // Hooks page
   hooksMounted: '已挂载到 DSH',
@@ -68,6 +83,7 @@ export const zh = {
   hooksDiscovered: '本机配置文件',
   hooksDiscoveredEmpty: '未发现本机 hook 配置文件',
   hooksNotMounted: '未挂载',
+  hooksNotMountedHint: '未挂载的配置文件无法在此启停；请先在 profile 中挂载 hook 桥',
   hookCount: '{count} 个钩子',
   eventCount: '{count} 个事件点',
   matcherAll: '全部',
@@ -84,7 +100,7 @@ export type HarnessPanelLocaleKey = keyof typeof zh
 export const en: Record<HarnessPanelLocaleKey, string> = {
   nav: 'Harness',
   title: 'Harness',
-  intro: 'MCP servers, skills and hooks at a glance. Read-only — no configuration is modified.',
+  intro: 'MCP servers, skills and hooks in one place. Start or stop MCP servers and hook bridges, and disable individual skills.',
   tabMcp: 'MCP',
   tabSkills: 'Skills',
   tabHooks: 'Hooks',
@@ -94,6 +110,16 @@ export const en: Record<HarnessPanelLocaleKey, string> = {
   loading: 'Loading…',
   error: 'Failed to load',
   empty: 'Nothing here yet',
+
+  mcpToggle: 'Enable or disable {name}',
+  skillToggle: 'Enable or disable {name}',
+  hookToggle: 'Enable or disable {name}',
+  toggleUnavailable: 'Plugin management is unavailable; switches are locked',
+  toggleReadOnlyManagement: 'Managed by DSH; cannot be switched here',
+  toggleReadOnlyUnaddressable: 'No writable profile row; cannot be switched here',
+  toggleFailed: 'Switch failed: {message}',
+  toggleRestartRequired: 'Saved; restart DSH to apply',
+  toggleOverridden: 'The change was overridden by a higher-priority configuration',
 
   mcpEmpty: 'No MCP servers configured',
   mcpEmptyHint: 'Add an @deepseek-ai/dsh-mcp-client row to the profile cordis.patch.yml to connect one.',
@@ -132,6 +158,10 @@ export const en: Record<HarnessPanelLocaleKey, string> = {
   skillsSearch: 'Search skills…',
   skillModel: 'model-invocable',
   skillCount: '{count} skills',
+  skillDisabledCount: '{count} disabled',
+  skillsFileControlUnavailable: 'File-level skill control is unavailable; switches are locked',
+  skillsDisabledHint: 'A disabled skill is turned off in its SKILL.md frontmatter and leaves the model catalog and the / menu',
+  skillsToggleFailed: 'Could not update the skill: {message}',
 
   hooksMounted: 'Mounted in DSH',
   hooksMountedEmpty: 'No hook bridges mounted',
@@ -139,6 +169,7 @@ export const en: Record<HarnessPanelLocaleKey, string> = {
   hooksDiscovered: 'On-disk config files',
   hooksDiscoveredEmpty: 'No on-disk hook config files found',
   hooksNotMounted: 'not mounted',
+  hooksNotMountedHint: 'Unmounted config files cannot be switched here; mount a hook bridge in the profile first',
   hookCount: '{count} hooks',
   eventCount: '{count} events',
   matcherAll: 'all',

@@ -1,9 +1,11 @@
 /**
  * MCP snapshot assembly: pure, host-side aggregation of the loader's
  * mcp-client rows, the tool registry's `mcp__*` schemas, and observed
- * `mcp/status` supervisor events. Read-only — touches no configuration file
- * and mutates no registry. Secret values never enter the snapshot: env and
- * header maps surface as key lists, URLs are credential-redacted.
+ * `mcp/status` supervisor events. Snapshot assembly is read-only — it touches
+ * no configuration file and mutates no registry. The panel's server switch is
+ * a separate browser action over the shipped `pluginManager` Remote. Secret
+ * values never enter the snapshot: env and header maps surface as key lists,
+ * URLs are credential-redacted.
  *
  * @module dsh-harness-panel/mcp
  */

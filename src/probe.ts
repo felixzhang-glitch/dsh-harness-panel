@@ -18,7 +18,7 @@ import { bounded, sanitizeError, sanitizeText } from './sanitize.ts'
 const INITIALIZE_PROTOCOL_VERSION = '2024-11-05'
 
 /** MCP clientInfo facts; protocol constants, not configuration. */
-const PROBE_CLIENT_INFO = { name: 'dsh-harness-panel', version: '0.1.0' }
+const PROBE_CLIENT_INFO = { name: 'dsh-harness-panel', version: '0.2.0' }
 
 /** Parent env names dropped before spawning a probe child. */
 const SENSITIVE_ENV = /KEY|PASSWORD|SECRET|TOKEN/i

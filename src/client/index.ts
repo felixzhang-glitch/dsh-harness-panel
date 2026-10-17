@@ -2,8 +2,8 @@
  * `dsh-harness-panel`, browser half: registers the Harness section into the
  * settings navigation (`settings.section`, below Usage Stats), mounts the
  * dictionaries and the scoped stylesheet, and binds the pages' data deps
- * (the shipped `skills` Remote namespace + the sessions store) into the
- * section component.
+ * (the shipped `skills` and `pluginManager` Remote namespaces + the sessions
+ * store) into the section component.
  *
  * @module dsh-harness-panel/client
  */
@@ -15,13 +15,17 @@ import { en, zh } from './locales.ts'
 import { installPanelStyles } from './styles.ts'
 import { HarnessSection, type HarnessSectionDeps } from './HarnessSection.tsx'
 import type { SkillsRemoteFace } from './SkillsPage.tsx'
+import type { PluginManagerRemoteFace } from './plugin-manager.ts'
 import type { Translate } from './shared.ts'
 
 /** Plugin name: matches the package name and the stamped bundle id. */
 export const name = 'dsh-harness-panel'
 
-/** Services the section reads. `remote.skills` must be named explicitly: cordis guards nested service access by dotted name. */
-export const inject = ['slots', 'locale', 'remote', 'remote.skills', 'sessions']
+/**
+ * Services the section reads. The nested Remote names must be named
+ * explicitly: cordis guards nested service access by dotted name.
+ */
+export const inject = ['slots', 'locale', 'remote', 'remote.skills', 'remote.pluginManager', 'sessions']
 
 /** Dictionary namespace owned by this plugin. */
 export const NS = 'settings.harnessPanel'
@@ -49,7 +53,10 @@ interface SlotsFace {
 interface ClientFace {
   readonly slots: SlotsFace
   readonly locale: LocaleFace
-  readonly remote: { skills?: SkillsRemoteFace } | undefined
+  readonly remote: {
+    skills?: SkillsRemoteFace
+    pluginManager?: PluginManagerRemoteFace
+  } | undefined
   readonly sessions: unknown
 }
 
@@ -66,6 +73,7 @@ export function apply(ctx: ClientContext): void {
 
   const deps: HarnessSectionDeps = {
     skills: { skills: client.remote?.skills, sessions: client.sessions },
+    pluginManager: client.remote?.pluginManager,
   }
   const Section = (props: { t: Translate }): JSX.Element =>
     createElement(HarnessSection, { ...props, deps })

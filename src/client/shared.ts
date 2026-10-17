@@ -1,6 +1,6 @@
 /**
  * Shared client helpers: the translate face the slot renderer hands over, the
- * same-origin JSON fetcher, and the current-session lookup.
+ * same-origin JSON readers/writer, and the current-session lookup.
  *
  * @module dsh-harness-panel/client/shared
  */
@@ -27,6 +27,33 @@ export async function fetchJson<T>(path: string, signal: AbortSignal): Promise<T
     try {
       const body = (await response.json()) as { error?: unknown }
       if (typeof body.error === 'string' && body.error !== '') detail = body.error
+    } catch { /* keep the status line */ }
+    throw new Error(detail)
+  }
+  return (await response.json()) as T
+}
+
+/**
+ * One JSON POST against a panel write route. The custom header is required by
+ * the host's same-origin gate; a cross-origin page cannot set it without a
+ * preflight the server does not answer.
+ */
+export async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    ...(signal === undefined ? {} : { signal }),
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-harness-panel': '1',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`
+    try {
+      const payload = (await response.json()) as { error?: unknown }
+      if (typeof payload.error === 'string' && payload.error !== '') detail = payload.error
     } catch { /* keep the status line */ }
     throw new Error(detail)
   }

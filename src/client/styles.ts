@@ -206,25 +206,41 @@ const PANEL_CSS = `
 [data-dsh-harness-panel] .dhp-card-head {
   box-sizing: border-box;
   display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+}
+[data-dsh-harness-panel] .dhp-card-head:hover,
+[data-dsh-harness-panel] .dhp-card[data-open='true'] > .dhp-card-head {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+/* The expansion target is its own button; the switch is a sibling, never a
+   nested button, so keyboard focus and activation stay two distinct stops. */
+[data-dsh-harness-panel] .dhp-card-toggle {
+  display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: 0;
-  padding: 12px 14px;
+  padding: 0;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-[data-dsh-harness-panel] .dhp-card-head:hover,
-[data-dsh-harness-panel] .dhp-card[data-open='true'] > .dhp-card-head {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-[data-dsh-harness-panel] .dhp-card-head:focus-visible {
+[data-dsh-harness-panel] .dhp-card-toggle:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: -2px;
+  outline-offset: 4px;
+  border-radius: var(--dsw-radius-md);
+}
+[data-dsh-harness-panel] .dhp-card-switch {
+  display: flex;
+  align-items: center;
+  flex: none;
 }
 [data-dsh-harness-panel] .dhp-card-row {
   display: flex;
@@ -380,12 +396,23 @@ const PANEL_CSS = `
   min-width: 0;
 }
 [data-dsh-harness-panel] .dhp-skill-name {
+  flex: 1;
+  min-width: 0;
   font-weight: 500;
   font-size: 13px;
   line-height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+[data-dsh-harness-panel] .dhp-skill-trailing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+[data-dsh-harness-panel] .dhp-skill[data-disabled='true'] .dhp-skill-name {
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* Hook groups. */

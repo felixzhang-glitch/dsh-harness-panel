@@ -1,14 +1,20 @@
 /**
  * `dsh-harness-panel` — the Harness settings panel: a native-styled settings
- * section grouping MCP server status (read-only + one-shot probes), the
- * session skill catalog (client-side, over the shipped `skills` Remote), and
- * hook bridge configurations (mounted rows + conventional on-disk files).
+ * section grouping MCP server status and start/stop, the session skill
+ * catalog with enable/disable, and hook bridge configurations (mounted rows
+ * plus conventional on-disk files).
  *
- * The host half is READ-ONLY: it registers three HTTP GET routes on the
- * webserver (`/harness-panel/mcp`, `/harness-panel/mcp/probe`,
- * `/harness-panel/hooks`), observes the upstream `mcp/status` seam, and never
- * writes a configuration file. Secret values never leave the host: env and
- * header maps surface as key lists, URLs and error text are redacted.
+ * The host half serves GET routes for MCP (`/harness-panel/mcp`,
+ * `/harness-panel/mcp/probe`), hooks (`/harness-panel/hooks`), and the skill
+ * toggle state (`/harness-panel/skills`), plus one write route for skill
+ * toggles (`POST /harness-panel/skills/toggle`). MCP and hook bridge switches
+ * do not write through this host: the browser calls the shipped
+ * `pluginManager` Remote, exactly like the built-in Plugins page. A skill
+ * toggle edits the skill file's frontmatter invocation keys — the
+ * provider's own disable contract, honored in every scope layer — and the
+ * state file under the DSH home records the original lines for restore.
+ * Secret values never leave the host: env and header maps surface as key
+ * lists, URLs and error text are redacted.
  *
  * Function plugin — no default export (the Loader unwraps
  * `exports.default ?? exports`).
@@ -36,16 +42,45 @@ import {
   scanHookPath,
   type HooksSnapshot,
 } from './hooks.ts'
+import {
+  hasPanelHeader,
+  isJsonContentType,
+  isSameOrigin,
+  readJsonBody,
+  RequestBodyError,
+  sendJson,
+  type RequestFace,
+  type ResponseFace,
+} from './http.ts'
+import { sanitizeError } from './sanitize.ts'
+import {
+  SkillFileError,
+  disableSkillFile,
+  enableSkillFile,
+  parseSkillToggleRequest,
+  type SkillToggleRequest,
+} from './skill-file.ts'
+import {
+  MAX_DISABLED_SKILLS,
+  disabledSkillRecords,
+  loadPanelStateFile,
+  resolvePanelStatePath,
+  savePanelStateFile,
+  type DisabledSkillRecord,
+  type PanelState,
+} from './skill-state.ts'
 
 export const name = 'dsh-harness-panel'
 
-/** Hard services: the facts the panel reads and the route registry it serves. */
+/** Hard services: the facts the panel reads and the route registry it serves. Skill gating is optional. */
 export const inject = ['loader', 'tools', 'webServer']
 
 /** Plugin config (all optional). */
 export interface Config {
   /** Per-probe timeout in milliseconds. */
   probeTimeoutMs?: number
+  /** Skill gate state file override; defaults to `$DSH_HOME/harness-panel/state.json`. */
+  statePath?: string
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -80,13 +115,7 @@ interface WebServerFace {
   register(route: {
     kind: 'exact'
     path: string
-    handler: (req: {
-      method?: string
-      url?: string
-    }, res: {
-      writeHead(status: number, headers: Record<string, string>): void
-      end(body?: string): void
-    }) => void | Promise<void>
+    handler: (req: RequestFace, res: ResponseFace) => void | Promise<void>
   }): () => void
 }
 
@@ -106,12 +135,6 @@ const FIBER_PHASE = {
   4: null,
   5: 'unloading',
 } as const
-
-/** JSON response helper: status + utf8 JSON body. */
-function sendJson(res: { writeHead(s: number, h: Record<string, string>): void; end(b?: string): void }, status: number, body: unknown): void {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-  res.end(JSON.stringify(body))
-}
 
 /** Collect the mcp-client loader rows. */
 function mcpRows(loader: HostFace['loader']): McpLoaderRow[] {
@@ -180,8 +203,10 @@ function probeSpec(loader: HostFace['loader'], serverName: string): ProbeTarget 
 }
 
 /**
- * Mount the panel: the three GET routes plus the upstream status observer.
- * Every registration is an effect on this fiber, so unloading removes the
+ * Mount the panel: the five routes and the upstream status observer. Skill
+ * toggles edit the skill file's frontmatter directly (the provider's own
+ * disable keys) and record the original lines in the state file. Every
+ * registration is an effect on this fiber, so unloading removes the
  * endpoints and the listener.
  *
  * @param ctx - context carrying loader + tools + webServer.
@@ -192,6 +217,15 @@ export function apply(ctx: Context, config?: Config): void {
   const probeTimeoutMs = typeof config?.probeTimeoutMs === 'number' && Number.isFinite(config.probeTimeoutMs)
     ? Math.max(1000, Math.floor(config.probeTimeoutMs))
     : 10_000
+  const statePath = config?.statePath ?? resolvePanelStatePath()
+
+  const loaded = loadPanelStateFile(statePath)
+  if (loaded.warning !== null) ctx.logger.warn(`harness-panel: ${loaded.warning}`)
+  let state: PanelState = loaded.state
+
+  // Serialize the toggle writes so two requests cannot interleave a file edit
+  // with a state write.
+  let stateWrite: Promise<void> = Promise.resolve()
 
   // Consume the shipped upstream seam (live events + one-shot query seed).
   const observer = new McpStatusObserver()
@@ -274,6 +308,111 @@ export function apply(ctx: Context, config?: Config): void {
       }
     },
   }), 'harness-panel: hooks route')
+
+  ctx.effect(() => host.webServer.register({
+    kind: 'exact',
+    path: '/harness-panel/skills',
+    handler: (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+      try {
+        sendJson(res, 200, {
+          fileControlAvailable: true,
+          disabled: disabledSkillRecords(state),
+          collectedAt: Date.now(),
+        })
+      } catch (error) {
+        sendJson(res, 500, { error: sanitizeError(error) })
+      }
+    },
+  }), 'harness-panel: skills route')
+
+  ctx.effect(() => host.webServer.register({
+    kind: 'exact',
+    path: '/harness-panel/skills/toggle',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+      if (!hasPanelHeader(req) || !isSameOrigin(req)) {
+        sendJson(res, 403, { error: 'forbidden' })
+        return
+      }
+      if (!isJsonContentType(req)) {
+        sendJson(res, 415, { error: 'content-type must be application/json' })
+        return
+      }
+      let parsed: SkillToggleRequest | undefined
+      try {
+        parsed = parseSkillToggleRequest(await readJsonBody(req))
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          sendJson(res, error.status, { error: error.message })
+          return
+        }
+        sendJson(res, 400, { error: sanitizeError(error) })
+        return
+      }
+      if (parsed === undefined) {
+        sendJson(res, 400, { error: 'invalid skill toggle request' })
+        return
+      }
+      const request = parsed
+      try {
+        const run = stateWrite.then(async () => {
+          if (request.enabled) {
+            // A skill deleted while disabled leaves nothing to restore: the
+            // file edit is a no-op and the record simply drops.
+            const record = state.disabledSkills.get(request.name)
+            if (record !== undefined) {
+              await enableSkillFile(record.path, record.name, record.original)
+              const next = new Map(state.disabledSkills)
+              next.delete(request.name)
+              const nextState: PanelState = { version: 2, disabledSkills: next }
+              await savePanelStateFile(statePath, nextState)
+              state = nextState
+            }
+            return
+          }
+          const disable = request.disable
+          if (disable === undefined) throw new SkillFileError(400, 'disable request has no skill file path')
+          if (state.disabledSkills.has(request.name)) return
+          if (state.disabledSkills.size >= MAX_DISABLED_SKILLS) {
+            throw new SkillFileError(500, `at most ${MAX_DISABLED_SKILLS} disabled skills are supported`)
+          }
+          // The file carries the disable for every scope layer; the recorded
+          // original lines make the toggle reversible.
+          const edit = await disableSkillFile(disable.path, disable.name)
+          const record: DisabledSkillRecord = {
+            name: disable.name,
+            description: disable.description,
+            path: disable.path,
+            ...(disable.whenToUse === undefined ? {} : { whenToUse: disable.whenToUse }),
+            modelInvocable: disable.modelInvocable,
+            disabledAt: Date.now(),
+            original: edit.original,
+          }
+          const next = new Map(state.disabledSkills)
+          next.set(request.name, record)
+          const nextState: PanelState = { version: 2, disabledSkills: next }
+          await savePanelStateFile(statePath, nextState)
+          state = nextState
+        })
+        stateWrite = run.catch(() => {})
+        await run
+        sendJson(res, 200, { disabled: disabledSkillRecords(state) })
+      } catch (error) {
+        if (error instanceof SkillFileError) {
+          sendJson(res, error.status, { error: sanitizeError(error.message) })
+          return
+        }
+        sendJson(res, 500, { error: sanitizeError(error) })
+      }
+    },
+  }), 'harness-panel: skills toggle route')
 }
 
 export { MCP_CLIENT_MODULE, MCP_STATUS_EVENT, McpStatusObserver, buildMcpSnapshot } from './mcp.ts'
@@ -282,3 +421,27 @@ export { parseHookFile, conventionalHookPaths } from './hooks.ts'
 export type { HooksSnapshot, HookBridgeView, HookDiscoveryView } from './hooks.ts'
 export { runProbe, scrubbedParentEnv } from './probe.ts'
 export { sanitizeUrl, sanitizeText, sanitizeError } from './sanitize.ts'
+export { writeFileAtomic } from './atomic.ts'
+export {
+  DISABLE_MODEL_KEY,
+  SkillFileError,
+  USER_INVOCABLE_KEY,
+  disableSkillFile,
+  enableSkillFile,
+  isSkillName,
+  parseSkillToggleRequest,
+} from './skill-file.ts'
+export type { OriginalInvocationLines, SkillFileEdit, SkillToggleRequest } from './skill-file.ts'
+export {
+  MAX_DISABLED_SKILLS,
+  PANEL_STATE_VERSION,
+  disabledSkillRecords,
+  loadPanelStateFile,
+  normalizeDisabledSkill,
+  parsePanelState,
+  resolvePanelStatePath,
+  savePanelStateFile,
+  serializePanelState,
+} from './skill-state.ts'
+export type { DisabledSkillRecord, PanelState } from './skill-state.ts'
+export { hasPanelHeader, isJsonContentType, isSameOrigin, readJsonBody, RequestBodyError } from './http.ts'

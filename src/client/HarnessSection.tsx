@@ -12,6 +12,7 @@ import type { JSX } from 'react'
 import { McpPage } from './McpPage.tsx'
 import { SkillsPage, type SkillsPageDeps } from './SkillsPage.tsx'
 import { HooksPage } from './HooksPage.tsx'
+import type { PluginManagerRemoteFace } from './plugin-manager.ts'
 import type { Translate } from './shared.ts'
 
 /** The fixed page set, in tab order. */
@@ -26,6 +27,8 @@ type PageId = (typeof PAGES)[number]['id']
 /** Services the pages read, bound by the plugin's apply closure. */
 export interface HarnessSectionDeps {
   readonly skills: SkillsPageDeps
+  /** `remote.pluginManager`; absent only when the namespace is not mounted. */
+  readonly pluginManager: PluginManagerRemoteFace | undefined
 }
 
 /** The section component. */
@@ -93,9 +96,9 @@ export function HarnessSection({ t, deps }: {
             aria-labelledby={`${tabsId}-tab-${page.id}`}
             hidden={!selected}
           >
-            {page.id === 'mcp' ? <McpPage t={t} />
+            {page.id === 'mcp' ? <McpPage t={t} deps={{ pluginManager: deps.pluginManager }} />
               : page.id === 'skills' ? <SkillsPage t={t} deps={deps.skills} />
-              : <HooksPage t={t} />}
+              : <HooksPage t={t} deps={{ pluginManager: deps.pluginManager }} />}
           </div>
         )
       })}

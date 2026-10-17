@@ -1,6 +1,8 @@
 # dsh-harness-panel bundle patch: mount the Harness settings panel host half.
 # `name` is the package name, resolved through the profile's node_modules.
-# The panel is read-only: it never writes configuration.
+# MCP and hook bridge switches go through the shipped plugin manager; a skill
+# toggle edits the skill file's frontmatter invocation keys and records the
+# original lines under $DSH_HOME/harness-panel/state.json.
 - insert:
     - id: harness-panel
       name: dsh-harness-panel
