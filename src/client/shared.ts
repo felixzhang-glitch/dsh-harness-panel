@@ -1,0 +1,78 @@
+/**
+ * Shared client helpers: the translate face the slot renderer hands over, the
+ * same-origin JSON fetcher, and the current-session lookup.
+ *
+ * @module dsh-harness-panel/client/shared
+ */
+
+import type { HarnessPanelLocaleKey } from './locales.ts'
+
+/** Namespace-bound translate function passed to slot components as `t`. */
+export type Translate = (key: HarnessPanelLocaleKey) => string
+
+/** Fill one `{placeholder}` in a dictionary entry. */
+export function fill(template: string, values: Record<string, string | number>): string {
+  let out = template
+  for (const [key, value] of Object.entries(values)) {
+    out = out.split(`{${key}}`).join(String(value))
+  }
+  return out
+}
+
+/** One JSON GET against the panel's host routes; throws on non-2xx. */
+export async function fetchJson<T>(path: string, signal: AbortSignal): Promise<T> {
+  const response = await fetch(path, { signal, headers: { accept: 'application/json' } })
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`
+    try {
+      const body = (await response.json()) as { error?: unknown }
+      if (typeof body.error === 'string' && body.error !== '') detail = body.error
+    } catch { /* keep the status line */ }
+    throw new Error(detail)
+  }
+  return (await response.json()) as T
+}
+
+/** Structural face of the client sessions store (read leaves only). */
+interface SessionsFace {
+  list?: {
+    getSnapshot(): {
+      current?: unknown
+      byId?: Record<string, { retainedBy?: { mainView?: number } } | undefined>
+    }
+  }
+}
+
+/**
+ * Read the current session id from the sessions store face (structural: the
+ * store shape differs across harness lines, so only the leaves are read). A
+ * host that publishes `current` wins; otherwise the session the main view
+ * retains is derived from the per-session retention facts.
+ */
+export function currentSessionId(sessions: unknown): string | undefined {
+  try {
+    const list = (sessions as SessionsFace | null | undefined)?.list
+    if (typeof list !== 'object' || list === null) return undefined
+    const snapshot = list.getSnapshot()
+    const current = snapshot.current
+    if (typeof current === 'string' && current !== '') return current
+    const byId = snapshot.byId
+    if (byId === null || typeof byId !== 'object') return undefined
+    for (const [id, entry] of Object.entries(byId)) {
+      if ((entry?.retainedBy?.mainView ?? 0) > 0) return id
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Format one epoch-ms timestamp for display; `null` renders the fallback. */
+export function formatTime(epochMs: number | null): string | null {
+  if (epochMs === null || !Number.isFinite(epochMs)) return null
+  try {
+    return new Date(epochMs).toLocaleString()
+  } catch {
+    return null
+  }
+}

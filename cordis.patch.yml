@@ -1,0 +1,9 @@
+# dsh-harness-panel bundle patch: mount the Harness settings panel host half.
+# `name` is the package name, resolved through the profile's node_modules.
+# The panel is read-only: it never writes configuration.
+- insert:
+    - id: harness-panel
+      name: dsh-harness-panel
+      config:
+        # Per-probe timeout in milliseconds.
+        probeTimeoutMs: 10000
