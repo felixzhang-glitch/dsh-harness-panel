@@ -15,9 +15,9 @@ import { dirname } from 'node:path'
  *
  * @param path - absolute target path.
  * @param text - full file content.
- * @param mode - file mode for the fresh file.
+ * @param mode - file mode for the fresh file; pass an existing file's bits to preserve them.
  */
-export async function writeFileAtomic(path: string, text: string, mode: 0o600 | 0o644 = 0o600): Promise<void> {
+export async function writeFileAtomic(path: string, text: string, mode = 0o600): Promise<void> {
   const directory = dirname(path)
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const temp = `${path}.tmp-${process.pid}-${Date.now()}`

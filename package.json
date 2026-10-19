@@ -1,7 +1,7 @@
 {
   "name": "dsh-harness-panel",
-  "version": "0.2.0",
-  "description": "Harness settings section for DeepSeek Harness: MCP server status and start/stop, the session skill catalog with enable/disable, and hook bridge start/stop, in one native-styled page.",
+  "version": "0.3.0",
+  "description": "Harness settings section for DeepSeek Harness: MCP server status and start/stop, the session skill catalog with enable/disable, hook bridge start/stop, and the AGENTS.md loading chain with inline editing, in one native-styled page.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -40,6 +40,7 @@
     "mcp",
     "skills",
     "hooks",
+    "agents",
     "panel"
   ],
   "engines": {

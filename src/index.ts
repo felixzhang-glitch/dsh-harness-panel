@@ -5,19 +5,23 @@
  * plus conventional on-disk files).
  *
  * The host half serves GET routes for MCP (`/harness-panel/mcp`,
- * `/harness-panel/mcp/probe`), hooks (`/harness-panel/hooks`), and the skill
- * toggle state (`/harness-panel/skills`), plus write routes for skill
- * toggles (`POST /harness-panel/skills/toggle`) and per-hook toggles
+ * `/harness-panel/mcp/probe`), hooks (`/harness-panel/hooks`), the skill
+ * toggle state (`/harness-panel/skills`), and the AGENTS.md loading chain
+ * (`/harness-panel/agents`, `/harness-panel/agents/file`), plus write routes
+ * for skill toggles (`POST /harness-panel/skills/toggle`), per-hook toggles
  * (`POST /harness-panel/hooks/toggle-hook` — one hook command's `type`
  * flipped to the sentinel the bridges skip, then the owning bridge row
- * reloaded through the shipped pluginManager). MCP and hook bridge switches
+ * reloaded through the shipped pluginManager), and AGENTS.md file writes
+ * (`POST /harness-panel/agents/write` — candidate-path allowlist plus an
+ * mtime precondition). MCP and hook bridge switches
  * do not write through this host: the browser calls the shipped
  * `pluginManager` Remote, exactly like the built-in Plugins page. A skill
  * toggle edits the skill file's frontmatter invocation keys — the
  * provider's own disable contract, honored in every scope layer — and the
  * state file under the DSH home records the original lines for restore.
  * Secret values never leave the host: env and header maps surface as key
- * lists, URLs and error text are redacted.
+ * lists, URLs and error text are redacted. Instruction-file content is
+ * returned only to the same-origin panel and is never logged.
  *
  * Function plugin — no default export (the Loader unwraps
  * `exports.default ?? exports`).
@@ -45,6 +49,25 @@ import {
   scanHookPath,
   type HooksSnapshot,
 } from './hooks.ts'
+import {
+  buildAgentsSnapshot,
+  discoverAgentInstructionSlots,
+  normalizeAbsolutePath,
+  resolveAgentScope,
+  type AgentPresetsFace,
+  type AgentScope,
+  type AgentSessionProjectionsFace,
+  type AgentSessionsFace,
+  type AgentScopeServices,
+  type ResolveAgentScopeOptions,
+} from './agents.ts'
+import {
+  AgentFileError,
+  parseAgentWriteRequest,
+  readAgentInstructionFile,
+  writeAgentInstructionFile,
+} from './agent-file.ts'
+import { MAX_AGENT_WRITE_BODY_BYTES, type AgentFileWriteResult } from './agents-contract.ts'
 import {
   hasPanelHeader,
   isJsonContentType,
@@ -219,11 +242,12 @@ function probeSpec(loader: HostFace['loader'], serverName: string): ProbeTarget 
 }
 
 /**
- * Mount the panel: the seven routes and the upstream status observer. Skill
+ * Mount the panel: the nine routes and the upstream status observer. Skill
  * toggles edit the skill file's frontmatter directly (the provider's own
- * disable keys) and record the original lines in the state file. Every
- * registration is an effect on this fiber, so unloading removes the
- * endpoints and the listener.
+ * disable keys) and record the original lines in the state file. AGENTS.md
+ * routes discover the same candidate chain the instruction loader uses and
+ * write one allowlisted candidate at a time. Every registration is an effect
+ * on this fiber, so unloading removes the endpoints and the listener.
  *
  * @param ctx - context carrying loader + tools + webServer.
  * @param config - raw loader config; defaults apply.
@@ -242,6 +266,49 @@ export function apply(ctx: Context, config?: Config): void {
   // Serialize the toggle writes so two requests cannot interleave a file edit
   // with a state write.
   let stateWrite: Promise<void> = Promise.resolve()
+
+  // Serialize AGENTS.md writes for the same reason: discovery and the mtime
+  // precondition are read outside the write, so concurrent saves must queue.
+  let agentWrite: Promise<void> = Promise.resolve()
+
+  /**
+   * Build the scope options shared by the AGENTS.md routes. The services are
+   * optional so the panel still mounts on a host without presets or sessions.
+   */
+  const agentScopeOptions = (sessionId?: string, cwd?: string): ResolveAgentScopeOptions => {
+    const services: AgentScopeServices = {
+      sessions: ctx.get('sessions') as AgentSessionsFace | undefined,
+      projections: ctx.get('sessionProjections') as AgentSessionProjectionsFace | undefined,
+      presets: ctx.get('agentPresets') as AgentPresetsFace | undefined,
+    }
+    return {
+      entries: [...host.loader.entries()],
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(cwd === undefined ? {} : { cwd }),
+      fsAvailable: ctx.get('fs') !== undefined,
+      services,
+    }
+  }
+
+  /** One file request resolved to its candidate path and chain scope. */
+  interface CandidateMatch {
+    readonly scope: AgentScope
+    readonly path: string
+  }
+
+  /** Resolve the candidate a file request names, or undefined when it is not in the chain. */
+  const candidateMatch = async (sessionId?: string, cwd?: string, path?: string): Promise<CandidateMatch | undefined> => {
+    const scope = await resolveAgentScope(agentScopeOptions(sessionId, cwd))
+    const discovery = await discoverAgentInstructionSlots(scope)
+    const requested = normalizeAbsolutePath(path)
+    if (requested === undefined) return undefined
+    for (const group of discovery.groups) {
+      for (const slot of group.slots) {
+        if (slot.path === requested) return { scope, path: slot.path }
+      }
+    }
+    return undefined
+  }
 
   // Consume the shipped upstream seam (live events + one-shot query seed).
   const observer = new McpStatusObserver()
@@ -556,6 +623,116 @@ export function apply(ctx: Context, config?: Config): void {
       }
     },
   }), 'harness-panel: skills toggle route')
+
+  ctx.effect(() => host.webServer.register({
+    kind: 'exact',
+    path: '/harness-panel/agents',
+    handler: async (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const sessionId = url.searchParams.get('session') ?? undefined
+        const cwd = url.searchParams.get('cwd') ?? undefined
+        sendJson(res, 200, await buildAgentsSnapshot(agentScopeOptions(sessionId, cwd)))
+      } catch (error) {
+        sendJson(res, 500, { error: sanitizeError(error) })
+      }
+    },
+  }), 'harness-panel: agents route')
+
+  ctx.effect(() => host.webServer.register({
+    kind: 'exact',
+    path: '/harness-panel/agents/file',
+    handler: async (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const match = await candidateMatch(
+          url.searchParams.get('session') ?? undefined,
+          url.searchParams.get('cwd') ?? undefined,
+          url.searchParams.get('path') ?? undefined,
+        )
+        if (match === undefined) {
+          sendJson(res, 400, { error: 'path is not an instruction candidate for this working directory' })
+          return
+        }
+        sendJson(res, 200, await readAgentInstructionFile(match.path))
+      } catch (error) {
+        if (error instanceof AgentFileError) {
+          sendJson(res, error.status, { error: sanitizeError(error.message) })
+          return
+        }
+        sendJson(res, 500, { error: sanitizeError(error) })
+      }
+    },
+  }), 'harness-panel: agents file route')
+
+  ctx.effect(() => host.webServer.register({
+    kind: 'exact',
+    path: '/harness-panel/agents/write',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { error: 'method not allowed' })
+        return
+      }
+      if (!hasPanelHeader(req) || !isSameOrigin(req)) {
+        sendJson(res, 403, { error: 'forbidden' })
+        return
+      }
+      if (!isJsonContentType(req)) {
+        sendJson(res, 415, { error: 'content-type must be application/json' })
+        return
+      }
+      let request
+      try {
+        request = parseAgentWriteRequest(await readJsonBody(req, MAX_AGENT_WRITE_BODY_BYTES))
+      } catch (error) {
+        if (error instanceof RequestBodyError) {
+          sendJson(res, error.status, { error: error.message })
+          return
+        }
+        sendJson(res, 400, { error: sanitizeError(error) })
+        return
+      }
+      if (request === undefined) {
+        sendJson(res, 400, { error: 'invalid instruction file write request' })
+        return
+      }
+      const parsed = request
+      try {
+        const match = await candidateMatch(parsed.sessionId, parsed.cwd, parsed.path)
+        if (match === undefined) {
+          sendJson(res, 400, { error: 'path is not an instruction candidate for this working directory' })
+          return
+        }
+        let result: AgentFileWriteResult | undefined
+        const run = agentWrite.then(async () => {
+          result = await writeAgentInstructionFile({
+            path: match.path,
+            content: parsed.content,
+            expectedMtimeMs: parsed.expectedMtimeMs,
+            allowedRoots: [match.scope.projectRoot, match.scope.dshHome, match.scope.agentsHome],
+          })
+        })
+        agentWrite = run.catch(() => {})
+        await run
+        if (result === undefined) throw new Error('instruction file write produced no result')
+        sendJson(res, 200, result)
+      } catch (error) {
+        if (error instanceof AgentFileError) {
+          sendJson(res, error.status, { error: sanitizeError(error.message) })
+          return
+        }
+        sendJson(res, 500, { error: sanitizeError(error) })
+      }
+    },
+  }), 'harness-panel: agents write route')
 }
 
 export { MCP_CLIENT_MODULE, MCP_STATUS_EVENT, McpStatusObserver, buildMcpSnapshot } from './mcp.ts'
@@ -601,3 +778,57 @@ export {
 } from './panel-state.ts'
 export type { DisabledSkillRecord, HookToggleRecord, PanelState } from './panel-state.ts'
 export { hasPanelHeader, isJsonContentType, isSameOrigin, readJsonBody, RequestBodyError } from './http.ts'
+export {
+  DEFAULT_INSTRUCTION_FILE_CANDIDATES,
+  DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES,
+  DEFAULT_MAX_SOURCE_BYTES,
+  DEFAULT_PROJECT_ROOT_MARKERS,
+  agentsHomeDisplay,
+  buildAgentsSnapshot,
+  discoverAgentInstructionSlots,
+  dshHomeDisplay,
+  normalizeAbsolutePath,
+  normalizeSessionId,
+  parseAgentInstructionsConfig,
+  renderInstructionBaseline,
+  resolveAgentScope,
+  resolveAgentsHome,
+  resolveDshHome,
+  resolveInstructionRow,
+} from './agents.ts'
+export type {
+  AgentInstructionSlot,
+  AgentInstructionSlotGroup,
+  AgentInstructionsLoaderEntry,
+  AgentScope,
+  AgentScopeServices,
+  ResolveAgentScopeOptions,
+} from './agents.ts'
+export {
+  AGENT_INSTRUCTIONS_MODULE,
+  AGENT_PRESET_MODULE,
+  MAX_AGENT_FILE_BYTES,
+  MAX_AGENT_PREVIEW_BYTES,
+  MAX_AGENT_WRITE_BODY_BYTES,
+} from './agents-contract.ts'
+export type {
+  AgentFileContent,
+  AgentFileMetadata,
+  AgentFileWriteResult,
+  AgentInstructionFileStatus,
+  AgentInstructionFileView,
+  AgentInstructionGroupView,
+  AgentInstructionReason,
+  AgentInstructionRowView,
+  AgentInstructionScope,
+  AgentInstructionsConfig,
+  AgentsBudgetView,
+  AgentsSnapshot,
+} from './agents-contract.ts'
+export {
+  AgentFileError,
+  parseAgentWriteRequest,
+  readAgentInstructionFile,
+  writeAgentInstructionFile,
+} from './agent-file.ts'
+export type { AgentWriteRequest } from './agent-file.ts'

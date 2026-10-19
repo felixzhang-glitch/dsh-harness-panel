@@ -3,7 +3,7 @@
  * settings navigation (`settings.section`, below Usage Stats), mounts the
  * dictionaries and the scoped stylesheet, and binds the pages' data deps
  * (the shipped `skills` and `pluginManager` Remote namespaces + the sessions
- * store) into the section component.
+ * store, which the AGENTS.md page follows) into the section component.
  *
  * @module dsh-harness-panel/client
  */
@@ -74,6 +74,7 @@ export function apply(ctx: ClientContext): void {
   const deps: HarnessSectionDeps = {
     skills: { skills: client.remote?.skills, sessions: client.sessions },
     pluginManager: client.remote?.pluginManager,
+    agents: { sessions: client.sessions },
   }
   const Section = (props: { t: Translate }): JSX.Element =>
     createElement(HarnessSection, { ...props, deps })

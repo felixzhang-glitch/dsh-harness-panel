@@ -1,6 +1,6 @@
 /**
  * The Harness settings section: a heading, an intro line, and the underline
- * tab strip (MCP / Skills / Hooks) around the three pages. The tab chrome
+ * tab strip (MCP / Skills / Hooks / AGENTS.md) around the four pages. The tab chrome
  * mirrors the shipped Plugins settings section; pages mount lazily on first
  * selection and stay mounted so their local state survives switching.
  *
@@ -12,6 +12,7 @@ import type { JSX } from 'react'
 import { McpPage } from './McpPage.tsx'
 import { SkillsPage, type SkillsPageDeps } from './SkillsPage.tsx'
 import { HooksPage } from './HooksPage.tsx'
+import { AgentsPage, type AgentsPageDeps } from './AgentsPage.tsx'
 import type { PluginManagerRemoteFace } from './plugin-manager.ts'
 import type { Translate } from './shared.ts'
 
@@ -20,6 +21,7 @@ const PAGES = [
   { id: 'mcp', labelKey: 'tabMcp' },
   { id: 'skills', labelKey: 'tabSkills' },
   { id: 'hooks', labelKey: 'tabHooks' },
+  { id: 'agents', labelKey: 'tabAgents' },
 ] as const
 
 type PageId = (typeof PAGES)[number]['id']
@@ -29,6 +31,8 @@ export interface HarnessSectionDeps {
   readonly skills: SkillsPageDeps
   /** `remote.pluginManager`; absent only when the namespace is not mounted. */
   readonly pluginManager: PluginManagerRemoteFace | undefined
+  /** The AGENTS.md page follows the current session's catalog directory. */
+  readonly agents: AgentsPageDeps
 }
 
 /** The section component. */
@@ -98,7 +102,8 @@ export function HarnessSection({ t, deps }: {
           >
             {page.id === 'mcp' ? <McpPage t={t} deps={{ pluginManager: deps.pluginManager }} />
               : page.id === 'skills' ? <SkillsPage t={t} deps={deps.skills} />
-              : <HooksPage t={t} />}
+              : page.id === 'hooks' ? <HooksPage t={t} />
+              : <AgentsPage t={t} deps={deps.agents} />}
           </div>
         )
       })}
