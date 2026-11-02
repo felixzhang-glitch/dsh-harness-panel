@@ -135,8 +135,10 @@ describe('buildMcpSnapshot', () => {
     expect(search.toolCount).toBe(1)
     expect(search.phase).toBe('unknown')
     expect(search.statusSource).toBe('derived')
+    expect(search.available).toBe(true)
     const local = snapshot.servers[1]!
     expect(local.enabled).toBe(false)
+    expect(local.available).toBe(false)
     expect(local.envKeys).toEqual(['API_KEY'])
     expect(JSON.stringify(snapshot)).not.toContain('never-shown')
   })
@@ -150,5 +152,48 @@ describe('buildMcpSnapshot', () => {
     expect(search.connectedAt).toBe(1234)
     expect(search.statusSource).toBe('upstream-event')
     expect(search.observedAt).not.toBeNull()
+  })
+})
+
+describe('availability', () => {
+  const schemas = [{ name: 'mcp__s__do', description: 'do' }]
+  const row = (overrides: Partial<McpLoaderRow> = {}): McpLoaderRow => ({
+    entryId: 'mcp-s',
+    disabled: false,
+    fiberPhase: 'active',
+    config: { serverName: 's', transport: 'streamable-http', url: 'https://example.com/mcp' },
+    ...overrides,
+  })
+  const availableOf = (loaderRow: McpLoaderRow, observer = new McpStatusObserver(), tools = schemas): boolean =>
+    buildMcpSnapshot([loaderRow], tools, observer).servers[0]!.available
+
+  it('infers availability from a live row with registered tools', () => {
+    expect(availableOf(row())).toBe(true)
+  })
+
+  it('does not assume availability without a registered tool', () => {
+    expect(availableOf(row(), new McpStatusObserver(), [])).toBe(false)
+  })
+
+  it('never marks a disabled row or a failed fiber available', () => {
+    expect(availableOf(row({ disabled: true }))).toBe(false)
+    expect(availableOf(row({ fiberPhase: 'failed' }))).toBe(false)
+  })
+
+  it('requires an active fiber and a resolvable transport', () => {
+    expect(availableOf(row({ fiberPhase: 'loading' }))).toBe(false)
+    expect(availableOf(row({ config: { serverName: 's', transport: 'bogus' } }))).toBe(false)
+  })
+
+  it('lets an observed upstream status win', () => {
+    const connected = new McpStatusObserver()
+    connected.observe({ serverName: 's', phase: 'connected', attempt: 0, maxAttempts: 3, toolCount: 0 })
+    expect(availableOf(row(), connected, [])).toBe(true)
+    const connecting = new McpStatusObserver()
+    connecting.observe({ serverName: 's', phase: 'connecting', attempt: 1, maxAttempts: 3, toolCount: 1 })
+    expect(availableOf(row(), connecting)).toBe(false)
+    const exhausted = new McpStatusObserver()
+    exhausted.observe({ serverName: 's', phase: 'exhausted', attempt: 3, maxAttempts: 3, toolCount: 0 })
+    expect(availableOf(row(), exhausted, [])).toBe(false)
   })
 })

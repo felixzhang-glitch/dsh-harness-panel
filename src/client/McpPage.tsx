@@ -58,7 +58,9 @@ function statusBadge(server: McpServerView, t: Translate): { tone: 'ok' | 'warn'
     case 'waiting': return { tone: 'warn', label: t('statusWaiting') }
     case 'exhausted': return { tone: 'error', label: t('statusExhausted') }
     case 'disposed': return { tone: 'muted', label: t('statusDisposed') }
-    default: return { tone: 'muted', label: t('statusUnknown') }
+    default: return server.available
+      ? { tone: 'ok', label: t('statusAvailable') }
+      : { tone: 'error', label: t('statusUnavailable') }
   }
 }
 

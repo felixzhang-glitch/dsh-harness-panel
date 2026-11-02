@@ -8,7 +8,7 @@ English · [中文](#中文)
 
 **MCP**
 
-- Every configured `@deepseek-ai/dsh-mcp-client` row: connection status (observed from the upstream `mcp/status` seam, honestly `unknown` when unobserved), transport, sanitized target, tool inventory
+- Every configured `@deepseek-ai/dsh-mcp-client` row: an available/unavailable badge (green/red) — observed status when the upstream `mcp/status` seam reports one, otherwise inferred from the live row and its registered tools — transport, sanitized target, tool inventory
 - A native start/stop switch on every addressable row, through the same `pluginManager` Remote the built-in Plugins page uses; disabling stops the mcp-client row and its tools
 - One-shot connectivity probe per server (streamable-http `initialize` POST / stdio spawn handshake, 10s deadline)
 - Env/header values never leave the host (keys only, URLs credential-redacted)
@@ -79,7 +79,7 @@ Compatibility: DSH `>=0.2.0 <0.3.0` (developed against desktop 0.2.1-rc.1). AGEN
 
 DeepSeek Harness 设置面板插件：在设置导航中新增 **Harness** 入口，集中查看并启停 MCP 服务器、Skills 与 Hooks，并查看/编辑 AGENTS.md 指令链，视觉与原生设置页一致。
 
-- **MCP**：已配置服务器的连接状态（来自上游 `mcp/status` 事件，无观察时如实显示未知）、传输方式、脱敏目标、工具清单，一键探活；每个可寻址行右侧有原生启停开关，停用后 mcp-client 行与其工具一起下线
+- **MCP**：已配置服务器的状态徽章显示「可用 / 不可用」（绿 / 红）——收到上游 `mcp/status` 事件时按事件状态显示，无事件时按该行是否已激活及已注册工具推断；同时展示传输方式、脱敏目标、工具清单，一键探活；每个可寻址行右侧有原生启停开关，停用后 mcp-client 行与其工具一起下线
 - **Skills**：当前会话可见的 skill 目录（与 `/` 菜单同源），每个 skill 右侧有原生启用/停用开关。停用直接写入该 skill SKILL.md 的官方 frontmatter 键（`user-invocable: false`、`disable-model-invocation: true`），在任何 registry scope 都生效，skill 从模型目录与 `/` 菜单消失；面板仍以关闭状态列出，重新启用时按记录还原原始行
 - **Hooks**：已挂载的 hook 桥配置解析（事件点 → 匹配器 → 命令），展开后**每条 command 有独立开关**——关闭时把该 hook 的 `type` 改为 bridge 跳过的哨兵值（provider 自身的机制），记录原始值并重载 bridge 行立即生效。bridge 整行不设总开关：loader 对整行的热恢复不可靠，面板停留在文件编辑能服务的粒度。本机约定路径上**未挂载**的配置文件继续只读扫描
 - **AGENTS.md**：按 loader 的真实顺序展示当前会话的指令链（`$DSH_HOME/AGENTS.md` → `$DSH_AGENTS_HOME/AGENTS.md` → 项目根到会话工作目录，每层先基础候选再 `.local` 覆盖），标注每个候选的最终去向：已注入、空文件、被截断、因预算省略、同组重复折叠、超过单文件上限、不可读或未创建。预算与去重按 `dsh-agent-instructions` 0.2.x 的算法复刻，并给出**将注入内容**的完整预览；当前 preset 通过会话投影与 preset `plugins` 解析，显示实际生效的 `maxBytes` 与候选配置。每个文件有内联编辑器，保存走候选路径白名单 + 1 MiB 内容上限 + mtime 前置校验；`~/.dsh/AGENTS.md -> ~/.agents/AGENTS.md` 这类符号链接写穿目标而保留链接，缺失候选可在对应目录卡片中新建

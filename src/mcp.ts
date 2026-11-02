@@ -80,6 +80,8 @@ export interface McpServerView {
   /** Display target: the command line (stdio) or the sanitized URL (http). */
   readonly target: string
   readonly enabled: boolean
+  /** End-user availability verdict behind the 可用/不可用 badge. */
+  readonly available: boolean
   readonly fiberPhase: McpFiberPhase
   /** Config-declared policy facts (reconnect budget, fail-fast, tool timeout). */
   readonly configuredNote: string | null
@@ -287,6 +289,29 @@ export class McpStatusObserver {
   }
 }
 
+/**
+ * The end-user availability verdict: is this server usable right now? An
+ * observed supervisor event is authoritative. Without one, availability is
+ * inferred only from facts this process can prove: the row is live (its fiber
+ * is active), its transport resolves, and at least one tool is registered.
+ * Tool registration happens only after a completed connect and `tools/list`,
+ * so it is evidence of a working client rather than of a configured row. A
+ * live row with zero tools gets no benefit of the doubt — a failed startup
+ * with reconnect enabled also leaves the fiber active. Disabled rows and
+ * failed fibers are never available.
+ */
+function availabilityOf(
+  row: McpLoaderRow,
+  status: McpStatusPayload | undefined,
+  transport: McpTransport,
+  toolCount: number,
+): boolean {
+  if (row.disabled) return false
+  if (row.fiberPhase === 'failed') return false
+  if (status !== undefined) return status.phase === 'connected'
+  return row.fiberPhase === 'active' && transport !== 'unknown' && toolCount > 0
+}
+
 /** Assemble the sanitized per-server view of one loader row. */
 export function serverViewOf(row: McpLoaderRow, observer: McpStatusObserver, tools: readonly McpToolView[]): McpServerView {
   const serverName = serverNameOf(row.config, `entry:${row.entryId}`)
@@ -298,6 +323,7 @@ export function serverViewOf(row: McpLoaderRow, observer: McpStatusObserver, too
     transport,
     target,
     enabled: !row.disabled,
+    available: availabilityOf(row, status, transport, tools.length),
     fiberPhase: row.fiberPhase,
     configuredNote: configuredNote(row.config),
     toolCount: tools.length,

@@ -139,9 +139,9 @@ describe('host routes', () => {
     const out = response()
     await handler!(request([]), out.res)
     expect(out.status()).toBe(200)
-    const body = JSON.parse(out.body()) as { servers: Array<{ serverName: string; toolCount: number; target: string }> }
+    const body = JSON.parse(out.body()) as { servers: Array<{ serverName: string; toolCount: number; target: string; available: boolean }> }
     expect(body.servers).toHaveLength(1)
-    expect(body.servers[0]).toMatchObject({ serverName: 'test', toolCount: 1 })
+    expect(body.servers[0]).toMatchObject({ serverName: 'test', toolCount: 1, available: true })
     expect(body.servers[0]!.target).toContain('token=***')
     expect(out.body()).not.toContain('sekret')
   })
