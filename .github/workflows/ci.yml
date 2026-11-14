@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The scripts prefer bunx and fall back to the local Node; provide both
+      # so the fallback path is exercised too.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # Execute the built client bundle's factory + apply() against stubbed
+      # platform externals to catch runtime wiring errors the type system misses.
+      - name: Smoke test built bundle
+        run: node tests/smoke-client-bundle.mjs

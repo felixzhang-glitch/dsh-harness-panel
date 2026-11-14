@@ -133,56 +133,37 @@ const PANEL_CSS = `
   line-height: 18px;
 }
 
-/* Buttons: the native quiet pill (module-platform fill, md radius). */
-[data-dsh-harness-panel] .dhp-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  border-radius: var(--dsw-radius-md);
-  padding: 5px 12px;
-  background: var(--dsw-alias-bg-module-platform);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 18px;
-  cursor: pointer;
+/* Buttons and the search field are the shipped Button / Input atoms; only
+   layout seats remain here. */
+[data-dsh-harness-panel] .dhp-search {
+  width: 100%;
+}
+[data-dsh-harness-panel] .dhp-copy {
   flex: none;
 }
-[data-dsh-harness-panel] .dhp-btn:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+[data-dsh-harness-panel] .dhp-time {
+  cursor: help;
 }
-[data-dsh-harness-panel] .dhp-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+[data-dsh-harness-panel] .dhp-detail-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
-[data-dsh-harness-panel] .dhp-btn:disabled:hover {
-  background: var(--dsw-alias-bg-module-platform);
+[data-dsh-harness-panel] .dhp-detail-target > .dhp-card-sub {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
 }
-[data-dsh-harness-panel] .dhp-btn:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 2px;
+[data-dsh-harness-panel] .dhp-skill-pathrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
-
-/* Search input: mirrors the native config field geometry. */
-[data-dsh-harness-panel] .dhp-search {
-  box-sizing: border-box;
-  width: 100%;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-md);
-  padding: 6px 12px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-}
-[data-dsh-harness-panel] .dhp-search::placeholder {
-  color: var(--dsw-alias-label-tertiary);
-}
-[data-dsh-harness-panel] .dhp-search:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 1px;
+[data-dsh-harness-panel] .dhp-skill-pathrow > .dhp-card-sub {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Cards: the native settings card — hairline stroke, xl radius, layer-2 fill. */
@@ -646,6 +627,195 @@ const PANEL_CSS = `
   font-size: 11px;
   line-height: 16px;
   color: var(--dsw-alias-label-secondary);
+}
+
+/* AGENTS.md editor: edit/preview mode bar and the Markdown seat. */
+[data-dsh-harness-panel] .dhp-agent-modebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+[data-dsh-harness-panel] .dhp-agent-md {
+  box-sizing: border-box;
+  min-height: 220px;
+  max-height: 380px;
+  overflow: auto;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: var(--dsw-radius-md);
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* Overview: a 2x2 health-card grid, native card geometry, tone carried by
+   the icon seat, the StateDot, and the attention rows — never loud fills. */
+[data-dsh-harness-panel] .dhp-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  [data-dsh-harness-panel] .dhp-overview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+[data-dsh-harness-panel] .dhp-ov-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0.5px solid var(--dsw-alias-settings-card-stroke);
+  border-radius: var(--dsw-radius-xl);
+  background: var(--dsw-alias-settings-card-fill);
+  padding: 14px;
+  min-width: 0;
+  transition: border-color 120ms ease;
+}
+[data-dsh-harness-panel] .dhp-ov-card:hover {
+  border-color: var(--dsw-alias-border-l3);
+}
+[data-dsh-harness-panel] .dhp-ov-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+[data-dsh-harness-panel] .dhp-ov-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--dsw-radius-md);
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+[data-dsh-harness-panel] .dhp-ov-card[data-tone='ok'] .dhp-ov-icon {
+  color: var(--dsw-alias-state-success-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);
+}
+[data-dsh-harness-panel] .dhp-ov-card[data-tone='warn'] .dhp-ov-icon {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 10%, transparent);
+}
+[data-dsh-harness-panel] .dhp-ov-card[data-tone='error'] .dhp-ov-icon {
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+}
+[data-dsh-harness-panel] .dhp-ov-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+[data-dsh-harness-panel] .dhp-ov-headline {
+  margin: 2px 0 0;
+  font-size: 21px;
+  line-height: 28px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+[data-dsh-harness-panel] .dhp-ov-facts {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+[data-dsh-harness-panel] .dhp-ov-issues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+[data-dsh-harness-panel] .dhp-ov-issue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--dsw-radius-md);
+  padding: 4px 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+[data-dsh-harness-panel] .dhp-ov-issue:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+[data-dsh-harness-panel] .dhp-ov-issue:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+[data-dsh-harness-panel] .dhp-ov-issue[data-severity='error'] .dhp-dot {
+  background: var(--dsw-alias-state-error-primary);
+}
+[data-dsh-harness-panel] .dhp-ov-issue[data-severity='warn'] .dhp-dot {
+  background: var(--dsw-alias-state-warn-primary);
+}
+[data-dsh-harness-panel] .dhp-ov-issue[data-severity='info'] .dhp-dot {
+  background: var(--dsw-alias-label-tertiary);
+}
+[data-dsh-harness-panel] .dhp-ov-issue-label {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+[data-dsh-harness-panel] .dhp-ov-issue-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+}
+[data-dsh-harness-panel] .dhp-ov-more {
+  padding: 2px 6px;
+}
+[data-dsh-harness-panel] .dhp-ov-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  overflow: hidden;
+}
+[data-dsh-harness-panel] .dhp-ov-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--dsw-alias-state-business-primary);
+  transition: width 200ms ease;
+}
+[data-dsh-harness-panel] .dhp-ov-bar-fill[data-hot='true'] {
+  background: var(--dsw-alias-state-warn-primary);
+}
+[data-dsh-harness-panel] .dhp-ov-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 2px;
+}
+[data-dsh-harness-panel] .dhp-ov-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+[data-dsh-harness-panel] .dhp-ov-card .dhp-skeleton {
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+}
+[data-dsh-harness-panel] .dhp-ov-card .dhp-error {
+  font-size: 12px;
 }
 
 `

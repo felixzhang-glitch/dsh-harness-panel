@@ -6,6 +6,12 @@ English · [中文](#中文)
 
 ## Features
 
+**Overview**
+
+- A landing tab with four health cards — MCP, Skills, Hooks, AGENTS.md — aggregated client-side from the same routes and Remotes the detail pages read; no extra host routes
+- Each card carries a native `StateDot` health tone, a headline count, and up to three attention rows (failed/unavailable servers, hook parse errors, truncated/omitted instruction files, …); clicking a row jumps straight to the owning tab
+- The AGENTS.md card shows a budget-usage bar; one failing source dims its own card, never the page
+
 **MCP**
 
 - Every configured `@deepseek-ai/dsh-mcp-client` row: an available/unavailable badge (green/red) — observed status when the upstream `mcp/status` seam reports one, otherwise inferred from the live row and its registered tools — transport, sanitized target, tool inventory
@@ -34,7 +40,7 @@ English · [中文](#中文)
 
 ## Design
 
-The visual language follows the shipped settings sections rather than inventing its own: `--dsw-*` design tokens only (no hard-coded colors), native corner radii (`--dsw-radius-xl` cards, `--dsw-radius-md` controls), 0.5px hairline strokes, the underline tab strip used by the built-in Plugins page, and the shipped `Switch` atom from `@deepseek-ai/dsh-client-ui-primitives` — the exact control the Plugins page uses. Light and dark themes both work.
+The visual language follows the shipped settings sections rather than inventing its own: `--dsw-*` design tokens only (no hard-coded colors), native corner radii (`--dsw-radius-xl` cards, `--dsw-radius-md` controls), 0.5px hairline strokes, the underline tab strip used by the built-in Plugins page, and the shipped atoms from `@deepseek-ai/dsh-client-ui-primitives` — `Switch`, `Button`, `Input`, `Toast`, `Tooltip`, `StateDot`, `MarkdownText`, icons, `relativeTime` and `writeClipboard`, the exact controls the native pages use. The AGENTS.md editor has an edit/preview toggle that renders the draft as Markdown. Light and dark themes both work.
 
 ## Install
 
@@ -66,7 +72,8 @@ Or install by local path from Settings → Plugins.
 pnpm install
 pnpm build       # emits lib/index.js (host ESM) + lib/client.js (browser bundle)
 pnpm typecheck
-pnpm test        # vitest: mcp aggregation, hooks parsing, AGENTS.md discovery/render/file edits, sanitization, skill file/state, route gates, switch models
+pnpm test        # vitest: overview aggregation, mcp aggregation, hooks parsing, AGENTS.md discovery/render/file edits, sanitization, skill file/state, route gates, switch models, locale parity
+node tests/smoke-client-bundle.mjs   # after build: execute the built client bundle's factory + apply() against stubbed externals
 ```
 
 The scripts prefer `bunx` and fall back to the local Node. On the macOS desktop install the DSH-bundled Node is hardened and cannot load the ad-hoc native rollup/rolldown bindings, so `bunx tsdown` / `bunx vitest run` is the path that works there.
@@ -79,6 +86,7 @@ Compatibility: DSH `>=0.2.0 <0.3.0` (developed against desktop 0.2.1-rc.1). AGEN
 
 DeepSeek Harness 设置面板插件：在设置导航中新增 **Harness** 入口，集中查看并启停 MCP 服务器、Skills 与 Hooks，并查看/编辑 AGENTS.md 指令链，视觉与原生设置页一致。
 
+- **总览**：落地页四张健康卡（MCP / Skills / Hooks / AGENTS.md），客户端聚合各详情页同源的路由与 Remote，不加 host 路由；每卡带原生 `StateDot` 健康色、 headline 计数与至多三条关注行（失败/不可用服务器、hook 解析错误、被截断/省略的指令文件等），点击直达对应 tab；AGENTS.md 卡显示预算占用条；单个数据源失败只置灰自己的卡片，不拖垮整页
 - **MCP**：已配置服务器的状态徽章显示「可用 / 不可用」（绿 / 红）——收到上游 `mcp/status` 事件时按事件状态显示，无事件时按该行是否已激活及已注册工具推断；同时展示传输方式、脱敏目标、工具清单，一键探活；每个可寻址行右侧有原生启停开关，停用后 mcp-client 行与其工具一起下线
 - **Skills**：当前会话可见的 skill 目录（与 `/` 菜单同源），每个 skill 右侧有原生启用/停用开关。停用直接写入该 skill SKILL.md 的官方 frontmatter 键（`user-invocable: false`、`disable-model-invocation: true`），在任何 registry scope 都生效，skill 从模型目录与 `/` 菜单消失；面板仍以关闭状态列出，重新启用时按记录还原原始行
 - **Hooks**：已挂载的 hook 桥配置解析（事件点 → 匹配器 → 命令），展开后**每条 command 有独立开关**——关闭时把该 hook 的 `type` 改为 bridge 跳过的哨兵值（provider 自身的机制），记录原始值并重载 bridge 行立即生效。bridge 整行不设总开关：loader 对整行的热恢复不可靠，面板停留在文件编辑能服务的粒度。本机约定路径上**未挂载**的配置文件继续只读扫描

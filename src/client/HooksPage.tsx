@@ -13,9 +13,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
-import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HookBridgeView, HooksSnapshot } from '../hooks.ts'
 import { fetchJson, fill, postJson, type Translate } from './shared.ts'
+import { CopyButton, RefreshButton } from './controls.tsx'
+import { PanelToastView, usePanelToast } from './toast.tsx'
 
 type ViewState =
   | { readonly status: 'loading' }
@@ -63,6 +65,9 @@ function BridgeCard({ bridge, t, onToggleHook, hookBusyKey }: {
             <span className="dhp-card-sub dhp-code">{bridge.configPath}</span>
           </span>
         </button>
+        <span className="dhp-card-switch">
+          <CopyButton text={bridge.configPath} label={t('copyPath')} />
+        </span>
       </div>
       {open ? (
         <div className="dhp-card-details">
@@ -85,6 +90,7 @@ function BridgeCard({ bridge, t, onToggleHook, hookBusyKey }: {
                           {hook.command}
                           {hook.timeoutSec !== null ? ` (${fill(t('timeout'), { sec: hook.timeoutSec })})` : ''}
                         </span>
+                        <CopyButton text={hook.command} label={t('copyCommand')} />
                         <Switch
                           checked={!hook.disabled}
                           label={fill(t('hookCommandToggle'), { name: hook.command })}
@@ -119,8 +125,7 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
   const [busyHookKey, setBusyHookKey] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [toggleError, setToggleError] = useState<string | null>(null)
+  const { toast, show, dismiss } = usePanelToast()
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -153,8 +158,6 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true)
-    setNotice(null)
-    setToggleError(null)
     const controller = new AbortController()
     loadSnapshot(controller.signal)
       .catch((error: unknown) => {
@@ -173,8 +176,6 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
     if (busyHookKey !== null) return
     const key = `${bridge.entryId} ${request.event} ${request.matcher ?? ''} ${request.command}`
     setBusyHookKey(key)
-    setNotice(null)
-    setToggleError(null)
     void postJson<HookToggleResponse>('/harness-panel/hooks/toggle-hook', {
       bridge: bridge.entryId,
       event: request.event,
@@ -183,18 +184,18 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
       enabled: request.enabled,
     }).then(async (response) => {
       if (!mounted.current) return
-      if (response.reloaded === 'restart-required') setNotice(t('toggleRestartRequired'))
-      else if (response.reloaded === 'unavailable') setNotice(t('toggleOverridden'))
-      else if (response.reloaded === 'failed') setNotice(t('toggleOverridden'))
+      if (response.reloaded === 'restart-required') show(t('toggleRestartRequired'))
+      else if (response.reloaded === 'unavailable') show(t('toggleOverridden'))
+      else if (response.reloaded === 'failed') show(t('toggleOverridden'))
       await reloadAll()
       if (!mounted.current) return
       setBusyHookKey(null)
     }).catch((error: unknown) => {
       if (!mounted.current) return
-      setToggleError(fill(t('toggleFailed'), { message: error instanceof Error ? error.message : String(error) }))
+      show(fill(t('toggleFailed'), { message: error instanceof Error ? error.message : String(error) }), 'warn')
       setBusyHookKey(null)
     })
-  }, [busyHookKey, reloadAll, t])
+  }, [busyHookKey, reloadAll, show, t])
 
   const discovered = state.status === 'ready' ? state.snapshot.discovered.filter(row => row.exists) : []
 
@@ -202,12 +203,8 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
     <>
       <div className="dhp-toolbar">
         <p className="dhp-sub" />
-        <button type="button" className="dhp-btn" disabled={refreshing} onClick={onRefresh}>
-          {refreshing ? t('refreshing') : t('refresh')}
-        </button>
+        <RefreshButton t={t} busy={refreshing} onClick={onRefresh} />
       </div>
-      {notice !== null ? <p className="dhp-hint" role="status">{notice}</p> : null}
-      {toggleError !== null ? <p className="dhp-error" role="alert">{toggleError}</p> : null}
       {state.status === 'loading' ? (
         <div className="dhp-skeleton" aria-label={t('loading')}>
           <span className="dhp-skeleton-bar" />
@@ -216,7 +213,7 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
       ) : state.status === 'error' ? (
         <>
           <p className="dhp-error" role="alert">{t('error')} · {state.message}</p>
-          <div><button type="button" className="dhp-btn" onClick={onRefresh}>{t('retry')}</button></div>
+          <div><Button size="sm" onClick={onRefresh}>{t('retry')}</Button></div>
         </>
       ) : (
         <>
@@ -250,6 +247,7 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
                     <div className="dhp-skill-row">
                       <span className="dhp-skill-name dhp-code">{row.path}</span>
                       <span className="dhp-badge" data-tone="muted">{t('hooksNotMounted')}</span>
+                      <CopyButton text={row.path} label={t('copyPath')} />
                     </div>
                     <span className="dhp-card-sub">
                       {row.parseError !== null
@@ -264,6 +262,7 @@ export function HooksPage({ t }: { readonly t: Translate }): JSX.Element {
           )}
         </>
       )}
+      <PanelToastView toast={toast} onDone={dismiss} />
     </>
   )
 }

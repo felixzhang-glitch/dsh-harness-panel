@@ -1,14 +1,16 @@
 /**
  * The Harness settings section: a heading, an intro line, and the underline
- * tab strip (MCP / Skills / Hooks / AGENTS.md) around the four pages. The tab chrome
- * mirrors the shipped Plugins settings section; pages mount lazily on first
- * selection and stay mounted so their local state survives switching.
+ * tab strip (Overview / MCP / Skills / Hooks / AGENTS.md) around the five
+ * pages. The tab chrome mirrors the shipped Plugins settings section; pages
+ * mount lazily on first selection and stay mounted so their local state
+ * survives switching.
  *
  * @module dsh-harness-panel/client/HarnessSection
  */
 
 import { useEffect, useId, useRef, useState } from 'react'
 import type { JSX } from 'react'
+import { OverviewPage } from './OverviewPage.tsx'
 import { McpPage } from './McpPage.tsx'
 import { SkillsPage, type SkillsPageDeps } from './SkillsPage.tsx'
 import { HooksPage } from './HooksPage.tsx'
@@ -18,6 +20,7 @@ import type { Translate } from './shared.ts'
 
 /** The fixed page set, in tab order. */
 const PAGES = [
+  { id: 'overview', labelKey: 'tabOverview' },
   { id: 'mcp', labelKey: 'tabMcp' },
   { id: 'skills', labelKey: 'tabSkills' },
   { id: 'hooks', labelKey: 'tabHooks' },
@@ -42,8 +45,8 @@ export function HarnessSection({ t, deps }: {
 }): JSX.Element {
   const tabsId = useId()
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const [activeId, setActiveId] = useState<PageId>('mcp')
-  const [visited, setVisited] = useState<ReadonlySet<PageId>>(() => new Set(['mcp']))
+  const [activeId, setActiveId] = useState<PageId>('overview')
+  const [visited, setVisited] = useState<ReadonlySet<PageId>>(() => new Set(['overview']))
 
   useEffect(() => {
     setVisited(previous => previous.has(activeId) ? previous : new Set([...previous, activeId]))
@@ -100,7 +103,8 @@ export function HarnessSection({ t, deps }: {
             aria-labelledby={`${tabsId}-tab-${page.id}`}
             hidden={!selected}
           >
-            {page.id === 'mcp' ? <McpPage t={t} deps={{ pluginManager: deps.pluginManager }} />
+            {page.id === 'overview' ? <OverviewPage t={t} deps={deps.skills} onNavigate={setActiveId} />
+              : page.id === 'mcp' ? <McpPage t={t} deps={{ pluginManager: deps.pluginManager }} />
               : page.id === 'skills' ? <SkillsPage t={t} deps={deps.skills} />
               : page.id === 'hooks' ? <HooksPage t={t} />
               : <AgentsPage t={t} deps={deps.agents} />}

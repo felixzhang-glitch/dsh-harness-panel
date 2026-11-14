@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
-import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconGlobeOutlineRegular, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { McpServerView, McpSnapshot } from '../mcp.ts'
 import {
   MCP_CLIENT_MODULE,
@@ -20,7 +20,9 @@ import {
   type PluginManagerRemoteFace,
 } from './plugin-manager.ts'
 import { usePluginRows } from './use-plugin-rows.ts'
-import { fetchJson, fill, formatTime, type Translate } from './shared.ts'
+import { fetchJson, fill, type Translate } from './shared.ts'
+import { CopyButton, RefreshButton, TimeLabel } from './controls.tsx'
+import { PanelToastView, usePanelToast } from './toast.tsx'
 
 /** One settled probe result, keyed by server name in page state. */
 interface ProbeResult {
@@ -104,8 +106,6 @@ function ServerCard(props: {
   const { server, t, toggle, probe, probing, onProbe } = props
   const [open, setOpen] = useState(false)
   const badge = statusBadge(server, t)
-  const lastConnected = formatTime(server.connectedAt)
-  const observedAt = formatTime(server.observedAt)
   return (
     <li className="dhp-card" data-open={open ? 'true' : undefined}>
       <div className="dhp-card-head">
@@ -144,6 +144,10 @@ function ServerCard(props: {
       </div>
       {open ? (
         <div className="dhp-card-details">
+          <div className="dhp-detail-target">
+            <span className="dhp-card-sub dhp-code">{server.target}</span>
+            <CopyButton text={server.target} label={t('copyTarget')} />
+          </div>
           <dl className="dhp-details">
             {server.configuredNote !== null ? (
               <>
@@ -176,30 +180,30 @@ function ServerCard(props: {
                 <dd>{server.reconnectCount}</dd>
               </>
             ) : null}
-            {lastConnected !== null ? (
+            {server.connectedAt !== null ? (
               <>
                 <dt>{t('lastConnected')}</dt>
-                <dd>{lastConnected}</dd>
+                <dd><TimeLabel at={server.connectedAt} t={t} /></dd>
               </>
             ) : null}
-            {observedAt !== null ? (
+            {server.observedAt !== null ? (
               <>
                 <dt>{t('observedAt')}</dt>
-                <dd>{observedAt}</dd>
+                <dd><TimeLabel at={server.observedAt} t={t} /></dd>
               </>
             ) : null}
           </dl>
           {server.lastError !== null ? <p className="dhp-error">{server.lastError}</p> : null}
           {server.statusSource === 'derived' ? <p className="dhp-hint">{t('neverObserved')}</p> : null}
           <div>
-            <button
-              type="button"
-              className="dhp-btn"
+            <Button
+              size="sm"
+              icon={<IconGlobeOutlineRegular />}
               disabled={probing || !server.enabled}
               onClick={() => { onProbe(server.serverName) }}
             >
               {probing ? t('probing') : t('probe')}
-            </button>
+            </Button>
           </div>
           {probe !== undefined ? (
             <p className={probe.status === 'completed' ? 'dhp-hint' : 'dhp-error'} role="status">
@@ -229,8 +233,7 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
   const [probes, setProbes] = useState<Readonly<Record<string, ProbeResult>>>({})
   const [probingName, setProbingName] = useState<string | null>(null)
   const [busyEntry, setBusyEntry] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [toggleError, setToggleError] = useState<string | null>(null)
+  const { toast, show, dismiss } = usePanelToast()
   const { state: rowsState, reload: reloadRows } = usePluginRows(deps.pluginManager)
   const mounted = useRef(true)
   const delayedRefresh = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -269,8 +272,6 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
 
   const onRefresh = useCallback(() => {
     setRefreshing(true)
-    setNotice(null)
-    setToggleError(null)
     const controller = new AbortController()
     loadSnapshot(controller.signal)
       .catch((error: unknown) => {
@@ -312,17 +313,15 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
     const info = findPluginInfo(rowsState.rows, server.entryId, MCP_CLIENT_MODULE)
     if (info === undefined || info.readOnlyReason !== undefined || info.patchId === undefined) return
     setBusyEntry(server.entryId)
-    setNotice(null)
-    setToggleError(null)
     void togglePluginRow(pm, info, next).then(async (outcome) => {
       if (!mounted.current) return
       if (outcome.kind === 'failed') {
-        setToggleError(fill(t('toggleFailed'), { message: outcome.message }))
+        show(fill(t('toggleFailed'), { message: outcome.message }), 'warn')
         setBusyEntry(null)
         return
       }
-      if (outcome.kind === 'restart-required') setNotice(t('toggleRestartRequired'))
-      else if (outcome.kind === 'overridden') setNotice(t('toggleOverridden'))
+      if (outcome.kind === 'restart-required') show(t('toggleRestartRequired'))
+      else if (outcome.kind === 'overridden') show(t('toggleOverridden'))
       await reloadAll()
       if (!mounted.current) return
       setBusyEntry(null)
@@ -336,10 +335,10 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
       }
     }).catch((error: unknown) => {
       if (!mounted.current) return
-      setToggleError(fill(t('toggleFailed'), { message: error instanceof Error ? error.message : String(error) }))
+      show(fill(t('toggleFailed'), { message: error instanceof Error ? error.message : String(error) }), 'warn')
       setBusyEntry(null)
     })
-  }, [busyEntry, deps.pluginManager, loadSnapshot, reloadAll, rowsState.rows, t])
+  }, [busyEntry, deps.pluginManager, loadSnapshot, reloadAll, rowsState.rows, show, t])
 
   const toggleFor = (server: McpServerView): ToggleView => {
     const info = findPluginInfo(rowsState.rows, server.entryId, MCP_CLIENT_MODULE)
@@ -361,13 +360,9 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
             tools: state.snapshot.servers.reduce((sum, server) => sum + server.toolCount, 0),
           }) : ''}
         </p>
-        <button type="button" className="dhp-btn" disabled={refreshing} onClick={onRefresh}>
-          {refreshing ? t('refreshing') : t('refresh')}
-        </button>
+        <RefreshButton t={t} busy={refreshing} onClick={onRefresh} />
       </div>
       {rowsState.status === 'error' ? <p className="dhp-hint">{t('toggleUnavailable')}</p> : null}
-      {notice !== null ? <p className="dhp-hint" role="status">{notice}</p> : null}
-      {toggleError !== null ? <p className="dhp-error" role="alert">{toggleError}</p> : null}
       {state.status === 'loading' ? (
         <div className="dhp-skeleton" aria-label={t('loading')}>
           <span className="dhp-skeleton-bar" />
@@ -376,7 +371,7 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
       ) : state.status === 'error' ? (
         <>
           <p className="dhp-error" role="alert">{t('error')} · {state.message}</p>
-          <div><button type="button" className="dhp-btn" onClick={onRefresh}>{t('retry')}</button></div>
+          <div><Button size="sm" onClick={onRefresh}>{t('retry')}</Button></div>
         </>
       ) : state.snapshot.servers.length === 0 ? (
         <>
@@ -398,6 +393,7 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
           ))}
         </ul>
       )}
+      <PanelToastView toast={toast} onDone={dismiss} />
     </>
   )
 }

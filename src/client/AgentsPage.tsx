@@ -9,8 +9,9 @@
  * @module dsh-harness-panel/client/AgentsPage
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { JSX } from 'react'
+import { Button, MarkdownText, Pill, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   MAX_AGENT_FILE_BYTES,
   type AgentFileContent,
@@ -32,6 +33,8 @@ import {
   postJson,
   type Translate,
 } from './shared.ts'
+import { RefreshButton } from './controls.tsx'
+import { PanelToastView, usePanelToast } from './toast.tsx'
 
 /** Services the page reads, bound by the plugin's apply closure. */
 export interface AgentsPageDeps {
@@ -49,8 +52,9 @@ interface EditorState {
   readonly loading: boolean
   readonly saving: boolean
   readonly readOnly: boolean
+  /** Preview renders the draft as Markdown instead of the source textarea. */
+  readonly preview: boolean
   readonly error: string | null
-  readonly notice: string | null
   readonly conflict: boolean
 }
 
@@ -120,12 +124,14 @@ function statusLabel(file: AgentInstructionFileView, t: Translate): string {
 }
 
 /** One file row with its optional inline editor. */
-function FileRow({ file, t, editor, onToggle, onContentChange, onSave, onClose, onReload }: {
+function FileRow({ file, t, editor, mdLabels, onToggle, onContentChange, onPreview, onSave, onClose, onReload }: {
   readonly file: AgentInstructionFileView
   readonly t: Translate
   readonly editor: EditorState | null
+  readonly mdLabels: MarkdownLabels
   readonly onToggle: (file: AgentInstructionFileView) => void
   readonly onContentChange: (value: string) => void
+  readonly onPreview: (preview: boolean) => void
   readonly onSave: () => void
   readonly onClose: () => void
   readonly onReload: () => void
@@ -159,7 +165,7 @@ function FileRow({ file, t, editor, onToggle, onContentChange, onSave, onClose, 
               <div className="dhp-agent-actions">
                 <span className="dhp-card-sub" />
                 <span className="dhp-card-trailing">
-                  <button type="button" className="dhp-btn" onClick={onClose}>{t('agentsCancel')}</button>
+                  <Button size="sm" onClick={onClose}>{t('agentsCancel')}</Button>
                 </span>
               </div>
             </>
@@ -168,14 +174,24 @@ function FileRow({ file, t, editor, onToggle, onContentChange, onSave, onClose, 
               {file.duplicateOf === null ? null : (
                 <p className="dhp-hint">{fill(t('agentsDuplicate'), { path: file.duplicateOf })}</p>
               )}
-              <textarea
-                className="dhp-agent-textarea"
-                aria-label={file.name}
-                spellCheck={false}
-                value={editor.content}
-                disabled={editor.saving}
-                onChange={(event) => { onContentChange(event.target.value) }}
-              />
+              <div className="dhp-agent-modebar" role="group" aria-label={file.name}>
+                <Pill active={!editor.preview} onClick={() => { onPreview(false) }}>{t('mdEdit')}</Pill>
+                <Pill active={editor.preview} onClick={() => { onPreview(true) }}>{t('mdPreview')}</Pill>
+              </div>
+              {editor.preview ? (
+                <div className="dhp-agent-md">
+                  <MarkdownText text={editor.content} labels={mdLabels} variant="compact" />
+                </div>
+              ) : (
+                <textarea
+                  className="dhp-agent-textarea"
+                  aria-label={file.name}
+                  spellCheck={false}
+                  value={editor.content}
+                  disabled={editor.saving}
+                  onChange={(event) => { onContentChange(event.target.value) }}
+                />
+              )}
               <div className="dhp-agent-actions">
                 <span className="dhp-card-sub">
                   {formatBytes(draftBytes)} / {formatBytes(MAX_AGENT_FILE_BYTES)}
@@ -183,27 +199,26 @@ function FileRow({ file, t, editor, onToggle, onContentChange, onSave, onClose, 
                   {file.symlink && file.realPath !== null ? ` · ${fill(t('agentsSymlink'), { path: file.realPath })}` : ''}
                 </span>
                 <span className="dhp-card-trailing">
-                  <button
-                    type="button"
-                    className="dhp-btn"
+                  <Button
+                    size="sm"
+                    variant="primary"
                     disabled={editor.saving || !isDirty(editor) || overLimit}
                     onClick={onSave}
                   >
                     {editor.saving ? t('agentsSaving') : t('agentsSave')}
-                  </button>
-                  <button type="button" className="dhp-btn" disabled={editor.saving} onClick={onClose}>
+                  </Button>
+                  <Button size="sm" disabled={editor.saving} onClick={onClose}>
                     {t('agentsCancel')}
-                  </button>
+                  </Button>
                 </span>
               </div>
               {overLimit ? <p className="dhp-hint">{fill(t('agentsDraftTooLarge'), { max: formatBytes(MAX_AGENT_FILE_BYTES) })}</p> : null}
             </>
           )}
           {editor.error !== null ? <p className="dhp-error" role="alert">{editor.error}</p> : null}
-          {editor.notice !== null ? <p className="dhp-hint" role="status">{editor.notice}</p> : null}
           {editor.conflict ? (
             <div>
-              <button type="button" className="dhp-btn" onClick={onReload}>{t('agentsReload')}</button>
+              <Button size="sm" onClick={onReload}>{t('agentsReload')}</Button>
             </div>
           ) : null}
         </div>
@@ -272,8 +287,16 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
   const [editor, setEditor] = useState<EditorState | null>(null)
+  const { toast, show, dismiss } = usePanelToast()
   const mounted = useRef(true)
   const fileAbort = useRef<AbortController | null>(null)
+
+  // Reference-stable Markdown chrome: a new identity would discard the
+  // renderer's cache on every parent rerender.
+  const mdLabels = useMemo<MarkdownLabels>(() => ({
+    code: { copyLabel: t('copy'), copiedLabel: t('copied') },
+    footnotes: t('mdFootnotes'),
+  }), [t])
 
   useEffect(() => {
     mounted.current = true
@@ -382,8 +405,8 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
       loading: file.exists,
       saving: false,
       readOnly: false,
+      preview: false,
       error: null,
-      notice: null,
       conflict: false,
     })
     if (file.exists) void loadEditorContent(file.path)
@@ -408,7 +431,7 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
     }
     const expectedMtimeMs = editor.exists ? editor.mtimeMs : null
     setEditor(previous => previous !== null && previous.path === path
-      ? { ...previous, saving: true, error: null, notice: null, conflict: false }
+      ? { ...previous, saving: true, error: null, conflict: false }
       : previous)
     void postJson<AgentFileWriteResult>('/harness-panel/agents/write', {
       ...(snapshot.sessionId === null ? {} : { sessionId: snapshot.sessionId }),
@@ -425,9 +448,9 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
             exists: true,
             original: content,
             mtimeMs: result.mtimeMs,
-            notice: t('agentsSaved'),
           }
         : previous)
+      show(t('agentsSaved'), 'success')
       void loadSnapshot(new AbortController().signal).catch(() => {})
     }).catch((error: unknown) => {
       if (!mounted.current) return
@@ -445,12 +468,16 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
           }
         : previous)
     })
-  }, [editor, snapshot, t, loadSnapshot])
+  }, [editor, snapshot, show, t, loadSnapshot])
 
   const onContentChange = useCallback((value: string): void => {
     setEditor(previous => previous === null
       ? previous
-      : { ...previous, content: value, notice: null, error: null, conflict: false })
+      : { ...previous, content: value, error: null, conflict: false })
+  }, [])
+
+  const onPreview = useCallback((preview: boolean): void => {
+    setEditor(previous => previous === null ? previous : { ...previous, preview })
   }, [])
 
   const reloadEditor = useCallback((): void => {
@@ -502,8 +529,10 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
               file={file}
               t={t}
               editor={editor}
+              mdLabels={mdLabels}
               onToggle={onToggleFile}
               onContentChange={onContentChange}
+              onPreview={onPreview}
               onSave={saveEditor}
               onClose={closeEditor}
               onReload={reloadEditor}
@@ -514,15 +543,14 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
               <summary>{fill(t('agentsCreateMissing'), { count: missing.length })}</summary>
               <div className="dhp-agent-chips">
                 {missing.map(file => (
-                  <button
+                  <Button
                     key={file.path}
-                    type="button"
-                    className="dhp-btn"
+                    size="sm"
                     aria-label={fill(t('agentsCreate'), { name: file.name })}
                     onClick={() => { openEditor(file) }}
                   >
                     {file.name}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </details>
@@ -536,9 +564,7 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
     <>
       <div className="dhp-toolbar">
         <p className="dhp-sub">{summary}</p>
-        <button type="button" className="dhp-btn" disabled={refreshing} onClick={onRefresh}>
-          {refreshing ? t('refreshing') : t('refresh')}
-        </button>
+        <RefreshButton t={t} busy={refreshing} onClick={onRefresh} />
       </div>
       <p className="dhp-hint">{t('agentsIntro')}</p>
       <p className="dhp-hint">{t('agentsOrderHint')}</p>
@@ -550,7 +576,7 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
       ) : state.status === 'error' ? (
         <>
           <p className="dhp-error" role="alert">{t('error')} · {state.message}</p>
-          <div><button type="button" className="dhp-btn" onClick={onRefresh}>{t('retry')}</button></div>
+          <div><Button size="sm" onClick={onRefresh}>{t('retry')}</Button></div>
         </>
       ) : snapshot === null ? null : (
         <>
@@ -595,6 +621,7 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
           )}
         </>
       )}
+      <PanelToastView toast={toast} onDone={dismiss} />
     </>
   )
 }

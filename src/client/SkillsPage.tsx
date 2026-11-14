@@ -12,8 +12,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
-import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconSearchOutlineRegular, Input, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { currentSessionId, fetchJson, fill, postJson, type Translate } from './shared.ts'
+import { CopyButton, RefreshButton } from './controls.tsx'
+import { PanelToastView, usePanelToast } from './toast.tsx'
 import {
   filterSkillRows,
   mergeSkillRows,
@@ -84,7 +86,7 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
   const [query, setQuery] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
-  const [toggleError, setToggleError] = useState<string | null>(null)
+  const { toast, show, dismiss } = usePanelToast()
   const mounted = useRef(true)
   const delayedRefresh = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -142,7 +144,6 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
 
   const run = useCallback((manual: boolean) => {
     if (manual) setRefreshing(true)
-    setToggleError(null)
     const controller = new AbortController()
     load(controller.signal)
       .catch((error: unknown) => {
@@ -168,16 +169,15 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
   const onToggle = useCallback((row: SkillRow, next: boolean) => {
     if (state.status !== 'ready' || !state.fileControlAvailable || busy !== null) return
     setBusy(row.name)
-    setToggleError(null)
     void (async () => {
       let response: SkillsToggleResponse
       try {
         response = await postJson<SkillsToggleResponse>('/harness-panel/skills/toggle', skillToggleBody(row, next))
       } catch (error) {
         if (!mounted.current) return
-        setToggleError(fill(t('skillsToggleFailed'), {
+        show(fill(t('skillsToggleFailed'), {
           message: error instanceof Error ? error.message : String(error),
-        }))
+        }), 'warn')
         setBusy(null)
         return
       }
@@ -222,7 +222,7 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
         void load(controller.signal).catch(() => {})
       }, 1200)
     })()
-  }, [busy, load, state, t])
+  }, [busy, load, show, state, t])
 
   const summary = state.status === 'ready'
     ? [
@@ -235,13 +235,12 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
     <>
       <div className="dhp-toolbar">
         <p className="dhp-sub">{summary}</p>
-        <button type="button" className="dhp-btn" disabled={refreshing} onClick={() => { run(true) }}>
-          {refreshing ? t('refreshing') : t('refresh')}
-        </button>
+        <RefreshButton t={t} busy={refreshing} onClick={() => { run(true) }} />
       </div>
-      <input
+      <Input
         type="search"
         className="dhp-search"
+        icon={<IconSearchOutlineRegular />}
         placeholder={t('skillsSearch')}
         value={query}
         onChange={(event) => { setQuery(event.target.value) }}
@@ -258,7 +257,6 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
       {state.status === 'ready' && disabledCount > 0 ? (
         <p className="dhp-hint">{t('skillsDisabledHint')}</p>
       ) : null}
-      {toggleError !== null ? <p className="dhp-error" role="alert">{toggleError}</p> : null}
       {state.status === 'loading' ? (
         <div className="dhp-skeleton" aria-label={t('loading')}>
           <span className="dhp-skeleton-bar" />
@@ -269,7 +267,7 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
           <p className="dhp-error" role="alert">
             {t('error')} · {state.message === 'skills-unavailable' ? t('skillsUnavailable') : state.message}
           </p>
-          <div><button type="button" className="dhp-btn" onClick={() => { run(true) }}>{t('retry')}</button></div>
+          <div><Button size="sm" onClick={() => { run(true) }}>{t('retry')}</Button></div>
         </>
       ) : filtered.length === 0 ? (
         state.session === 'ok' ? <p className="dhp-state">{t('skillsEmpty')}</p> : null
@@ -297,12 +295,16 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
               </div>
               {skill.description !== '' ? <span className="dhp-card-sub">{skill.description}</span> : null}
               {skill.path !== undefined && skill.path !== '' ? (
-                <span className="dhp-card-sub dhp-code">{skill.path}</span>
+                <span className="dhp-skill-pathrow">
+                  <span className="dhp-card-sub dhp-code">{skill.path}</span>
+                  <CopyButton text={skill.path} label={t('copyPath')} />
+                </span>
               ) : null}
             </div>
           ))}
         </div>
       )}
+      <PanelToastView toast={toast} onDone={dismiss} />
     </>
   )
 }
