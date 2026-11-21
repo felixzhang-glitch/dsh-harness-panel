@@ -3,3 +3,4 @@ lib/
 *.tsbuildinfo
 .env
 .env.*
+preview/dist

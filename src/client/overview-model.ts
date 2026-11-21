@@ -1,7 +1,8 @@
 /**
  * Pure Overview aggregation: the four settled page snapshots become four
- * health cards plus one attention count. No React, no fetch, no locale — the
- * page maps issue kinds to dictionary keys, so every rule here is unit-testable.
+ * status-board rows plus one attention count. No React, no fetch, no locale —
+ * the page maps issue kinds to dictionary keys, so every rule here is
+ * unit-testable.
  *
  * @module dsh-harness-panel/client/overview-model
  */
@@ -24,10 +25,10 @@ export interface OverviewSkillsInput {
   readonly disabled: readonly DisabledSkillLike[]
 }
 
-/** The four detail pages an overview card can open. */
+/** The four detail pages an overview row opens. */
 export type OverviewPageId = 'mcp' | 'skills' | 'hooks' | 'agents'
 
-/** Card health tone, mapped to the native StateDot semantics by the page. */
+/** Row health tone; the page renders it as a dot and a state word. */
 export type OverviewTone = 'ok' | 'warn' | 'error' | 'muted'
 
 /** What one attention row names. */

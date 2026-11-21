@@ -139,6 +139,13 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 
+/** Format one epoch-ms timestamp as a local 24h wall clock (HH:MM:SS). */
+export function formatClock(epochMs: number): string {
+  const date = new Date(epochMs)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 /** Format one epoch-ms timestamp for display; `null` renders the fallback. */
 export function formatTime(epochMs: number | null): string | null {
   if (epochMs === null || !Number.isFinite(epochMs)) return null

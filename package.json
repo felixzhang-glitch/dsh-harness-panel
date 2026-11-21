@@ -1,6 +1,6 @@
 {
   "name": "dsh-harness-panel",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Harness settings section for DeepSeek Harness: MCP server status and start/stop, the session skill catalog with enable/disable, hook bridge start/stop, and the AGENTS.md loading chain with inline editing, in one native-styled page.",
   "type": "module",
   "main": "./lib/index.js",
@@ -64,6 +64,7 @@
     "build": "bunx --bun tsdown || tsdown",
     "typecheck": "bunx --bun tsc --noEmit || tsc --noEmit",
     "test": "bunx --bun vitest run || vitest run",
+    "preview": "bun preview/build.ts",
     "prepare": "bunx --bun tsdown || tsdown"
   },
   "license": "MIT",

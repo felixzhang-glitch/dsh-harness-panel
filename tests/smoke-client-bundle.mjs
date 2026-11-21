@@ -109,7 +109,7 @@ const enKeys = Object.keys(dicts.en).sort()
 if (JSON.stringify(zhKeys) !== JSON.stringify(enKeys)) throw new Error('zh/en key mismatch in built bundle')
 if (!dicts.zh.tabOverview || !dicts.en.tabOverview) throw new Error('Overview locale key missing in built bundle')
 if (styleElements.length !== 1) throw new Error('expected one stylesheet installation')
-if (!styleElements[0].textContent.includes('dhp-overview-grid')) throw new Error('overview styles missing in built bundle')
+if (!styleElements[0].textContent.includes('dhp-board')) throw new Error('overview styles missing in built bundle')
 
 // The settings.section inject callback registers the section component.
 const injectEntry = registrations.sections.find(s => s.slot === 'settings.section')

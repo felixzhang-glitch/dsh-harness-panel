@@ -103,11 +103,11 @@ export function HarnessSection({ t, deps }: {
             aria-labelledby={`${tabsId}-tab-${page.id}`}
             hidden={!selected}
           >
-            {page.id === 'overview' ? <OverviewPage t={t} deps={deps.skills} onNavigate={setActiveId} />
-              : page.id === 'mcp' ? <McpPage t={t} deps={{ pluginManager: deps.pluginManager }} />
-              : page.id === 'skills' ? <SkillsPage t={t} deps={deps.skills} />
-              : page.id === 'hooks' ? <HooksPage t={t} />
-              : <AgentsPage t={t} deps={deps.agents} />}
+            {page.id === 'overview' ? <OverviewPage t={t} deps={deps.skills} active={selected} onNavigate={setActiveId} />
+              : page.id === 'mcp' ? <McpPage t={t} deps={{ pluginManager: deps.pluginManager }} active={selected} />
+              : page.id === 'skills' ? <SkillsPage t={t} deps={deps.skills} active={selected} />
+              : page.id === 'hooks' ? <HooksPage t={t} active={selected} />
+              : <AgentsPage t={t} deps={deps.agents} active={selected} />}
           </div>
         )
       })}

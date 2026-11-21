@@ -3,7 +3,7 @@
  * loader's own precedence order, with each candidate's dedupe/budget
  * disposition. Present files open an inline editor backed by the host's
  * mtime-checked write route; missing candidates can be created from their
- * directory card. The page follows the current session's working directory and
+ * directory group. The page follows the current session's working directory and
  * reloads when that session changes.
  *
  * @module dsh-harness-panel/client/AgentsPage
@@ -11,7 +11,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { JSX } from 'react'
-import { Button, MarkdownText, Pill, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button,
+  IconChevronDownOutlineRegular,
+  MarkdownText,
+  Pill,
+  type MarkdownLabels,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   MAX_AGENT_FILE_BYTES,
   type AgentFileContent,
@@ -33,8 +39,9 @@ import {
   postJson,
   type Translate,
 } from './shared.ts'
-import { RefreshButton } from './controls.tsx'
+import { CopyButton, RefreshButton } from './controls.tsx'
 import { PanelToastView, usePanelToast } from './toast.tsx'
+import { useResumeRefresh } from './use-resume-refresh.ts'
 
 /** Services the page reads, bound by the plugin's apply closure. */
 export interface AgentsPageDeps {
@@ -63,7 +70,7 @@ type ViewState =
   | { readonly status: 'error'; readonly message: string }
   | { readonly status: 'ready'; readonly snapshot: AgentsSnapshot }
 
-/** Status badge tone per file disposition. */
+/** Tag tone per file disposition. */
 const STATUS_TONE: Record<AgentInstructionFileStatus, 'ok' | 'warn' | 'error' | 'muted'> = {
   loaded: 'ok',
   empty: 'muted',
@@ -76,7 +83,7 @@ const STATUS_TONE: Record<AgentInstructionFileStatus, 'ok' | 'warn' | 'error' | 
   'not-loaded': 'muted',
 }
 
-/** Status badge dictionary key per file disposition. */
+/** Status tag dictionary key per file disposition. */
 const STATUS_KEY: Record<AgentInstructionFileStatus, HarnessPanelLocaleKey> = {
   loaded: 'agentsStatusLoaded',
   empty: 'agentsStatusEmpty',
@@ -109,16 +116,10 @@ function isDirty(editor: EditorState): boolean {
   return editor.content !== editor.original
 }
 
-/** The status badge text for one file. */
+/** The status tag text for one file. */
 function statusLabel(file: AgentInstructionFileView, t: Translate): string {
   if (file.status === 'truncated') {
-    return fill(t('agentsStatusTruncated'), {
-      included: formatBytes(file.includedBytes ?? 0),
-      original: formatBytes(file.sizeBytes ?? 0),
-    })
-  }
-  if (file.status === 'duplicate') {
-    return t('agentsStatusDuplicate')
+    return fill(t('agentsStatusTruncated'), { included: formatBytes(file.includedBytes ?? 0) })
   }
   return t(STATUS_KEY[file.status])
 }
@@ -140,31 +141,45 @@ function FileRow({ file, t, editor, mdLabels, onToggle, onContentChange, onPrevi
   const draftBytes = editor === null ? 0 : utf8Bytes(editor.content)
   const overLimit = draftBytes > MAX_AGENT_FILE_BYTES
   return (
-    <div className="dhp-agent-file" data-open={open ? 'true' : undefined}>
-      <button
-        type="button"
-        className="dhp-agent-file-toggle"
-        aria-expanded={open}
-        onClick={() => { onToggle(file) }}
-      >
-        <span className="dhp-agent-file-name">{file.name}</span>
-        <span className="dhp-card-sub dhp-code">{file.displayPath}</span>
-        <span className="dhp-agent-file-meta">
-          <span className="dhp-badge" data-tone={STATUS_TONE[file.status]}>{statusLabel(file, t)}</span>
-          {file.symlink ? <span className="dhp-badge" data-tone="muted">{t('agentsSymlinkShort')}</span> : null}
-          <span className="dhp-card-sub">{formatBytes(file.sizeBytes)}</span>
+    <li className="dhp-row" data-open={open ? 'true' : undefined}>
+      <div className="dhp-row-head">
+        <button
+          type="button"
+          className="dhp-row-main dhp-row-toggle"
+          aria-expanded={open}
+          onClick={() => { onToggle(file) }}
+        >
+          <span className="dhp-row-line">
+            <span className="dhp-row-title">{file.name}</span>
+            <span className="dhp-row-end">
+              <span className="dhp-tag" data-tone={STATUS_TONE[file.status]}>{statusLabel(file, t)}</span>
+              {file.symlink ? <span className="dhp-tag">{t('agentsSymlinkShort')}</span> : null}
+            </span>
+          </span>
+          <span className="dhp-row-line">
+            {/* The group head already names the directory; a path equal to the
+                file name adds nothing. */}
+            <span className="dhp-row-sub dhp-code">
+              {file.displayPath === file.name ? file.directory : file.displayPath}
+            </span>
+            <span className="dhp-row-meta">{formatBytes(file.sizeBytes)}</span>
+          </span>
+        </button>
+        <span className="dhp-row-end">
+          <CopyButton text={file.path} label={t('copyPath')} />
+          <IconChevronDownOutlineRegular className="dhp-chevron" />
         </span>
-      </button>
+      </div>
       {open && editor !== null ? (
-        <div className="dhp-agent-editor">
+        <div className="dhp-editor">
           {editor.loading ? (
             <span className="dhp-skeleton-bar" />
           ) : editor.readOnly ? (
             <>
               <p className="dhp-hint">{fill(t('agentsReadOnly'), { max: formatBytes(MAX_AGENT_FILE_BYTES) })}</p>
-              <div className="dhp-agent-actions">
-                <span className="dhp-card-sub" />
-                <span className="dhp-card-trailing">
+              <div className="dhp-editor-bar">
+                <span className="dhp-editor-meta" />
+                <span className="dhp-actions">
                   <Button size="sm" onClick={onClose}>{t('agentsCancel')}</Button>
                 </span>
               </div>
@@ -174,17 +189,23 @@ function FileRow({ file, t, editor, mdLabels, onToggle, onContentChange, onPrevi
               {file.duplicateOf === null ? null : (
                 <p className="dhp-hint">{fill(t('agentsDuplicate'), { path: file.duplicateOf })}</p>
               )}
-              <div className="dhp-agent-modebar" role="group" aria-label={file.name}>
-                <Pill active={!editor.preview} onClick={() => { onPreview(false) }}>{t('mdEdit')}</Pill>
-                <Pill active={editor.preview} onClick={() => { onPreview(true) }}>{t('mdPreview')}</Pill>
+              <div className="dhp-editor-bar">
+                <span className="dhp-actions" role="group" aria-label={file.name}>
+                  <Pill active={!editor.preview} onClick={() => { onPreview(false) }}>{t('mdEdit')}</Pill>
+                  <Pill active={editor.preview} onClick={() => { onPreview(true) }}>{t('mdPreview')}</Pill>
+                </span>
+                <span className="dhp-editor-meta">
+                  {formatBytes(draftBytes)} / {formatBytes(MAX_AGENT_FILE_BYTES)}
+                  {isDirty(editor) ? ` · ${t('agentsDirty')}` : ''}
+                </span>
               </div>
               {editor.preview ? (
-                <div className="dhp-agent-md">
+                <div className="dhp-md">
                   <MarkdownText text={editor.content} labels={mdLabels} variant="compact" />
                 </div>
               ) : (
                 <textarea
-                  className="dhp-agent-textarea"
+                  className="dhp-textarea"
                   aria-label={file.name}
                   spellCheck={false}
                   value={editor.content}
@@ -192,13 +213,11 @@ function FileRow({ file, t, editor, mdLabels, onToggle, onContentChange, onPrevi
                   onChange={(event) => { onContentChange(event.target.value) }}
                 />
               )}
-              <div className="dhp-agent-actions">
-                <span className="dhp-card-sub">
-                  {formatBytes(draftBytes)} / {formatBytes(MAX_AGENT_FILE_BYTES)}
-                  {isDirty(editor) ? ` · ${t('agentsDirty')}` : ''}
-                  {file.symlink && file.realPath !== null ? ` · ${fill(t('agentsSymlink'), { path: file.realPath })}` : ''}
+              <div className="dhp-editor-bar">
+                <span className="dhp-editor-meta">
+                  {file.symlink && file.realPath !== null ? fill(t('agentsSymlink'), { path: file.realPath }) : ''}
                 </span>
-                <span className="dhp-card-trailing">
+                <span className="dhp-actions">
                   <Button
                     size="sm"
                     variant="primary"
@@ -217,13 +236,13 @@ function FileRow({ file, t, editor, mdLabels, onToggle, onContentChange, onPrevi
           )}
           {editor.error !== null ? <p className="dhp-error" role="alert">{editor.error}</p> : null}
           {editor.conflict ? (
-            <div>
+            <div className="dhp-actions">
               <Button size="sm" onClick={onReload}>{t('agentsReload')}</Button>
             </div>
           ) : null}
         </div>
       ) : null}
-    </div>
+    </li>
   )
 }
 
@@ -282,7 +301,12 @@ function fileQuery(snapshot: AgentsSnapshot, path: string): string {
 }
 
 /** The AGENTS.md page body. */
-export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: AgentsPageDeps }): JSX.Element {
+export function AgentsPage({ t, deps, active }: {
+  readonly t: Translate
+  readonly deps: AgentsPageDeps
+  /** Whether this panel is the selected tab; selecting it again re-reads. */
+  readonly active: boolean
+}): JSX.Element {
   const scope = splitScopeKey(useSessionScopeKey(deps.sessions))
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
@@ -330,6 +354,12 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
       fileAbort.current = null
     }
   }, [loadSnapshot])
+
+  const refreshQuietly = useCallback((): void => {
+    void loadSnapshot(new AbortController().signal).catch(() => {})
+  }, [loadSnapshot])
+  // Instruction files are edited in place; re-read dispositions on tab resume.
+  useResumeRefresh(active, refreshQuietly)
 
   const onRefresh = useCallback(() => {
     setRefreshing(true)
@@ -504,119 +534,134 @@ export function AgentsPage({ t, deps }: { readonly t: Translate; readonly deps: 
     ? ''
     : snapshot.budget.maxBytes === null
       ? t('agentsStatusNotLoaded')
-      : `${fill(t('agentsBudget'), { max: formatBytes(snapshot.budget.maxBytes) })} · ${fill(t('agentsRendered'), {
+      : fill(t('agentsRendered'), {
           files: snapshot.budget.loadedFileCount,
-          bytes: formatBytes(snapshot.budget.renderedBytes),
-        })}`
+          bytes: `${formatBytes(snapshot.budget.renderedBytes)} / ${formatBytes(snapshot.budget.maxBytes)}`,
+        })
 
-  const renderGroup = (group: AgentInstructionGroupView): JSX.Element => {
+  const renderGroup = (group: AgentInstructionGroupView): JSX.Element | null => {
     const existing = group.files.filter(file => file.exists)
     const missing = group.files.filter(file => !file.exists)
+    // A directory with no candidate at all has nothing to show or create.
+    if (existing.length === 0 && missing.length === 0) return null
     return (
-      <li key={group.key} className="dhp-card">
-        <div className="dhp-card-head dhp-agent-group-head">
-          <span className="dhp-agent-group-title dhp-code">{group.displayDirectory}</span>
-          <span className="dhp-card-trailing">
-            {group.isProjectRoot ? <span className="dhp-badge" data-tone="accent">{t('agentsProjectRoot')}</span> : null}
-            {group.isCwd ? <span className="dhp-badge" data-tone="accent">{t('agentsCwdBadge')}</span> : null}
-            <span className="dhp-card-sub">{fill(t('agentsGroupCount'), { count: existing.length })}</span>
-          </span>
+      <section key={group.key} className="dhp-block">
+        <div className="dhp-block-head">
+          <h3 className="dhp-block-title" data-mono="true">{group.displayDirectory}</h3>
+          <p className="dhp-block-note">
+            {group.isProjectRoot ? <span className="dhp-tag">{t('agentsProjectRoot')}</span> : null}
+            {group.isCwd ? <span className="dhp-tag">{t('agentsCwdBadge')}</span> : null}
+            <span>{fill(t('agentsGroupCount'), { count: existing.length })}</span>
+          </p>
         </div>
-        <div className="dhp-agent-files">
-          {existing.map(file => (
-            <FileRow
-              key={file.path}
-              file={file}
-              t={t}
-              editor={editor}
-              mdLabels={mdLabels}
-              onToggle={onToggleFile}
-              onContentChange={onContentChange}
-              onPreview={onPreview}
-              onSave={saveEditor}
-              onClose={closeEditor}
-              onReload={reloadEditor}
-            />
-          ))}
-          {missing.length > 0 ? (
-            <details className="dhp-agent-missing">
-              <summary>{fill(t('agentsCreateMissing'), { count: missing.length })}</summary>
-              <div className="dhp-agent-chips">
-                {missing.map(file => (
-                  <Button
-                    key={file.path}
-                    size="sm"
-                    aria-label={fill(t('agentsCreate'), { name: file.name })}
-                    onClick={() => { openEditor(file) }}
-                  >
-                    {file.name}
-                  </Button>
-                ))}
-              </div>
-            </details>
-          ) : null}
-        </div>
-      </li>
+        {existing.length > 0 ? (
+          <ul className="dhp-rows">
+            {existing.map(file => (
+              <FileRow
+                key={file.path}
+                file={file}
+                t={t}
+                editor={editor}
+                mdLabels={mdLabels}
+                onToggle={onToggleFile}
+                onContentChange={onContentChange}
+                onPreview={onPreview}
+                onSave={saveEditor}
+                onClose={closeEditor}
+                onReload={reloadEditor}
+              />
+            ))}
+          </ul>
+        ) : null}
+        {missing.length > 0 ? (
+          <details className="dhp-disclosure">
+            <summary>{fill(t('agentsCreateMissing'), { count: missing.length })}</summary>
+            <div className="dhp-chips">
+              {missing.map(file => (
+                <Button
+                  key={file.path}
+                  size="sm"
+                  aria-label={fill(t('agentsCreate'), { name: file.name })}
+                  onClick={() => { openEditor(file) }}
+                >
+                  {file.name}
+                </Button>
+              ))}
+            </div>
+          </details>
+        ) : null}
+      </section>
     )
   }
 
   return (
     <>
       <div className="dhp-toolbar">
-        <p className="dhp-sub">{summary}</p>
+        <p className="dhp-meta">{summary}</p>
         <RefreshButton t={t} busy={refreshing} onClick={onRefresh} />
       </div>
       <p className="dhp-hint">{t('agentsIntro')}</p>
-      <p className="dhp-hint">{t('agentsOrderHint')}</p>
+      <details className="dhp-disclosure">
+        <summary>{t('agentsHelp')}</summary>
+        <p className="dhp-hint">{t('agentsOrderHint')}</p>
+      </details>
       {state.status === 'loading' ? (
         <div className="dhp-skeleton" aria-label={t('loading')}>
+          <span className="dhp-skeleton-bar" />
           <span className="dhp-skeleton-bar" />
           <span className="dhp-skeleton-bar" />
         </div>
       ) : state.status === 'error' ? (
         <>
           <p className="dhp-error" role="alert">{t('error')} · {state.message}</p>
-          <div><Button size="sm" onClick={onRefresh}>{t('retry')}</Button></div>
+          <div className="dhp-actions"><Button size="sm" onClick={onRefresh}>{t('retry')}</Button></div>
         </>
       ) : snapshot === null ? null : (
         <>
-          <p className="dhp-hint">
-            {t(cwdLabelKey)}: <span className="dhp-code">{snapshot.cwd}</span>
-            {' · '}
-            {snapshot.presetId === null ? t('agentsPresetUnknown') : fill(t('agentsPreset'), { id: snapshot.presetId })}
-            {' · '}
-            {t('agentsRowLabel')}: {snapshot.row === null
-              ? t('agentsRowMissingShort')
-              : `${t(snapshot.row.source === 'preset' ? 'agentsRowPreset' : 'agentsRowRoot')} · ${snapshot.row.entryId}`}
-          </p>
-          {reasonKey !== null ? <p className="dhp-warn">{t(reasonKey)}</p> : null}
+          <dl className="dhp-facts">
+            <dt>{t(cwdLabelKey)}</dt>
+            <dd className="dhp-code">{snapshot.cwd}</dd>
+            <dt>{t('agentsPreset')}</dt>
+            <dd>{snapshot.presetId === null ? t('agentsPresetUnknown') : snapshot.presetId}</dd>
+            <dt>{t('agentsRowLabel')}</dt>
+            <dd>
+              {snapshot.row === null
+                ? t('agentsRowMissingShort')
+                : `${t(snapshot.row.source === 'preset' ? 'agentsRowPreset' : 'agentsRowRoot')} · ${snapshot.row.entryId}`}
+            </dd>
+          </dl>
+          {reasonKey !== null ? <p className="dhp-note" data-tone="warn">{t(reasonKey)}</p> : null}
           {snapshot.warnings.length > 0 ? (
-            <div>
-              <p className="dhp-hint">{t('agentsWarnings')}</p>
+            <div className="dhp-block">
+              <p className="dhp-block-title">{t('agentsWarnings')}</p>
               {snapshot.warnings.map((warning, index) => (
                 <p key={index} className="dhp-hint">{warning}</p>
               ))}
             </div>
           ) : null}
-          <p className="dhp-group-title">{t('agentsGlobalRoots')}</p>
-          <ul className="dhp-cards">
-            {snapshot.groups.filter(group => group.scope !== 'project').map(renderGroup)}
-          </ul>
-          <p className="dhp-group-title">{t('agentsProjectChain')}</p>
-          <p className="dhp-hint dhp-code">{snapshot.projectRoot} → {snapshot.cwd}</p>
-          <ul className="dhp-cards">
-            {snapshot.groups.filter(group => group.scope === 'project').map(renderGroup)}
-          </ul>
+          <section className="dhp-block">
+            <div className="dhp-block-head">
+              <h3 className="dhp-block-title">{t('agentsGlobalRoots')}</h3>
+            </div>
+          </section>
+          {snapshot.groups.filter(group => group.scope !== 'project').map(renderGroup)}
+          <section className="dhp-block">
+            <div className="dhp-block-head">
+              <h3 className="dhp-block-title">{t('agentsProjectChain')}</h3>
+            </div>
+            <p className="dhp-hint dhp-code">{snapshot.projectRoot} → {snapshot.cwd}</p>
+          </section>
+          {snapshot.groups.filter(group => group.scope === 'project').map(renderGroup)}
           {snapshot.groups.every(group => group.files.every(file => !file.exists)) ? (
             <>
-              <p className="dhp-state">{t('agentsNoFiles')}</p>
+              <p className="dhp-empty">{t('agentsNoFiles')}</p>
               <p className="dhp-hint">{t('agentsNoFilesHint')}</p>
             </>
           ) : null}
           {snapshot.preview === null ? null : (
-            <details className="dhp-agent-preview">
+            <details className="dhp-disclosure">
               <summary>{t('agentsPreview')}</summary>
-              <pre>{snapshot.preview}</pre>
+              <pre className="dhp-pre">{snapshot.preview}</pre>
             </details>
           )}
         </>

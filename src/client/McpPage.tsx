@@ -1,16 +1,21 @@
 /**
- * The MCP page: server cards (status badge, transport, target, tool count)
- * with expandable details, a one-shot probe, and a native start/stop switch
- * on every addressable loader row. The switch rides the shipped
- * `pluginManager` Remote, so disabling a server stops its mcp-client row and
- * its tools exactly as the built-in Plugins page would.
+ * The MCP page: one row per configured server — live state, transport, target,
+ * tool inventory — with an expandable fact sheet, a one-shot probe, and a
+ * native start/stop switch on every addressable loader row. The switch rides
+ * the shipped `pluginManager` Remote, so disabling a server stops its
+ * mcp-client row and its tools exactly as the built-in Plugins page would.
  *
  * @module dsh-harness-panel/client/McpPage
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
-import { Button, IconGlobeOutlineRegular, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button,
+  IconChevronDownOutlineRegular,
+  IconGlobeOutlineRegular,
+  Switch,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { McpServerView, McpSnapshot } from '../mcp.ts'
 import {
   MCP_CLIENT_MODULE,
@@ -23,6 +28,7 @@ import { usePluginRows } from './use-plugin-rows.ts'
 import { fetchJson, fill, type Translate } from './shared.ts'
 import { CopyButton, RefreshButton, TimeLabel } from './controls.tsx'
 import { PanelToastView, usePanelToast } from './toast.tsx'
+import { useResumeRefresh } from './use-resume-refresh.ts'
 
 /** One settled probe result, keyed by server name in page state. */
 interface ProbeResult {
@@ -42,7 +48,7 @@ export interface McpPageDeps {
   readonly pluginManager: PluginManagerRemoteFace | undefined
 }
 
-/** The switch state one server card renders. */
+/** The switch state one server row renders. */
 interface ToggleView {
   readonly checked: boolean
   readonly disabled: boolean
@@ -94,8 +100,8 @@ function switchLock(
   return undefined
 }
 
-/** One server card. */
-function ServerCard(props: {
+/** One server row. */
+function ServerRow(props: {
   readonly server: McpServerView
   readonly t: Translate
   readonly toggle: ToggleView
@@ -107,32 +113,30 @@ function ServerCard(props: {
   const [open, setOpen] = useState(false)
   const badge = statusBadge(server, t)
   return (
-    <li className="dhp-card" data-open={open ? 'true' : undefined}>
-      <div className="dhp-card-head">
+    <li className="dhp-row" data-open={open ? 'true' : undefined} data-off={server.enabled ? undefined : 'true'}>
+      <div className="dhp-row-head">
         <button
           type="button"
-          className="dhp-card-toggle"
+          className="dhp-row-main dhp-row-toggle"
           aria-expanded={open}
           onClick={() => { setOpen(value => !value) }}
         >
-          <span className="dhp-card-row">
-            <span className="dhp-card-title">{server.serverName}</span>
-            <span className="dhp-card-trailing">
-              <span className="dhp-badge" data-tone={badge.tone}>
-                <span className="dhp-dot" />
-                {badge.label}
-              </span>
+          <span className="dhp-row-line">
+            <span className="dhp-row-title" data-mono="true">{server.serverName}</span>
+            <span className="dhp-state" data-tone={badge.tone}>
+              <span className="dhp-dot" />
+              {badge.label}
             </span>
           </span>
-          <span className="dhp-card-row">
-            <span className="dhp-card-sub">{server.target}</span>
-            <span className="dhp-card-trailing">
-              <span className="dhp-card-sub">{transportLabel(server, t)}</span>
-              <span className="dhp-card-sub">{fill(t('toolCount'), { count: server.toolCount })}</span>
+          <span className="dhp-row-line">
+            <span className="dhp-row-sub dhp-code">{server.target}</span>
+            <span className="dhp-row-meta">
+              <span>{transportLabel(server, t)}</span>
+              <span>{fill(t('toolCount'), { count: server.toolCount })}</span>
             </span>
           </span>
         </button>
-        <span className="dhp-card-switch">
+        <span className="dhp-row-end">
           <Switch
             checked={toggle.checked}
             label={fill(t('mcpToggle'), { name: server.serverName })}
@@ -140,15 +144,17 @@ function ServerCard(props: {
             {...toggle.title === undefined ? {} : { title: toggle.title }}
             onChange={toggle.onChange}
           />
+          <IconChevronDownOutlineRegular className="dhp-chevron" />
         </span>
       </div>
       {open ? (
-        <div className="dhp-card-details">
-          <div className="dhp-detail-target">
-            <span className="dhp-card-sub dhp-code">{server.target}</span>
-            <CopyButton text={server.target} label={t('copyTarget')} />
-          </div>
-          <dl className="dhp-details">
+        <div className="dhp-row-details">
+          <dl className="dhp-facts">
+            <dt>{t('mcpTarget')}</dt>
+            <dd>
+              <span className="dhp-code">{server.target}</span>
+              <CopyButton text={server.target} label={t('copyTarget')} />
+            </dd>
             {server.configuredNote !== null ? (
               <>
                 <dt>{t('configuredNote')}</dt>
@@ -170,8 +176,10 @@ function ServerCard(props: {
             {server.attempt > 0 && server.maxAttempts > 0 ? (
               <>
                 <dt>{t('statusConnecting')}</dt>
-                <dd>{fill(t('attemptLine'), { attempt: server.attempt, maxAttempts: server.maxAttempts })}
-                  {server.delayMs !== null ? ` · ${fill(t('backoff'), { ms: server.delayMs })}` : ''}</dd>
+                <dd>
+                  {fill(t('attemptLine'), { attempt: server.attempt, maxAttempts: server.maxAttempts })}
+                  {server.delayMs !== null ? ` · ${fill(t('backoff'), { ms: server.delayMs })}` : ''}
+                </dd>
               </>
             ) : null}
             {server.reconnectCount > 0 ? (
@@ -195,7 +203,7 @@ function ServerCard(props: {
           </dl>
           {server.lastError !== null ? <p className="dhp-error">{server.lastError}</p> : null}
           {server.statusSource === 'derived' ? <p className="dhp-hint">{t('neverObserved')}</p> : null}
-          <div>
+          <div className="dhp-actions">
             <Button
               size="sm"
               icon={<IconGlobeOutlineRegular />}
@@ -210,16 +218,19 @@ function ServerCard(props: {
               {probe.status === 'completed' ? t('probeOk') : t('probeFailed')} · {probe.detail} · {probe.latencyMs}ms
             </p>
           ) : null}
-          {server.tools.length > 0 ? (
-            <ul className="dhp-tools">
-              {server.tools.map(tool => (
-                <li key={tool.name} className="dhp-tool">
-                  <span className="dhp-tool-name">{tool.name}</span>
-                  {tool.description !== '' ? <span className="dhp-tool-desc">{tool.description}</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
+          {server.tools.length === 0 ? <p className="dhp-hint">{t('mcpNoTools')}</p> : (
+            <details className="dhp-disclosure" open={server.tools.length <= 6}>
+              <summary>{fill(t('mcpToolsList'), { count: server.tools.length })}</summary>
+              <ul className="dhp-tools">
+                {server.tools.map(tool => (
+                  <li key={tool.name} className="dhp-tool">
+                    <span className="dhp-tool-name">{tool.name}</span>
+                    {tool.description !== '' ? <span className="dhp-tool-desc">{tool.description}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       ) : null}
     </li>
@@ -227,7 +238,12 @@ function ServerCard(props: {
 }
 
 /** The MCP page body. */
-export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: McpPageDeps }): JSX.Element {
+export function McpPage({ t, deps, active }: {
+  readonly t: Translate
+  readonly deps: McpPageDeps
+  /** Whether this panel is the selected tab; selecting it again re-reads. */
+  readonly active: boolean
+}): JSX.Element {
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
   const [probes, setProbes] = useState<Readonly<Record<string, ProbeResult>>>({})
@@ -269,6 +285,9 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
     })
     reloadRows()
   }, [loadSnapshot, reloadRows])
+
+  // Switches elsewhere in the panel change this inventory; re-read on tab resume.
+  useResumeRefresh(active, reloadAll)
 
   const onRefresh = useCallback(() => {
     setRefreshing(true)
@@ -354,11 +373,13 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
   return (
     <>
       <div className="dhp-toolbar">
-        <p className="dhp-sub">
-          {state.status === 'ready' ? fill(t('mcpSummary'), {
-            servers: state.snapshot.servers.length,
-            tools: state.snapshot.servers.reduce((sum, server) => sum + server.toolCount, 0),
-          }) : ''}
+        <p className="dhp-meta">
+          {state.status === 'ready'
+            ? fill(t('mcpSummary'), {
+                servers: state.snapshot.servers.length,
+                tools: state.snapshot.servers.reduce((sum, server) => sum + server.toolCount, 0),
+              })
+            : ''}
         </p>
         <RefreshButton t={t} busy={refreshing} onClick={onRefresh} />
       </div>
@@ -367,21 +388,22 @@ export function McpPage({ t, deps }: { readonly t: Translate; readonly deps: Mcp
         <div className="dhp-skeleton" aria-label={t('loading')}>
           <span className="dhp-skeleton-bar" />
           <span className="dhp-skeleton-bar" />
+          <span className="dhp-skeleton-bar" />
         </div>
       ) : state.status === 'error' ? (
         <>
           <p className="dhp-error" role="alert">{t('error')} · {state.message}</p>
-          <div><Button size="sm" onClick={onRefresh}>{t('retry')}</Button></div>
+          <div className="dhp-actions"><Button size="sm" onClick={onRefresh}>{t('retry')}</Button></div>
         </>
       ) : state.snapshot.servers.length === 0 ? (
         <>
-          <p className="dhp-state">{t('mcpEmpty')}</p>
+          <p className="dhp-empty">{t('mcpEmpty')}</p>
           <p className="dhp-hint">{t('mcpEmptyHint')}</p>
         </>
       ) : (
-        <ul className="dhp-cards">
+        <ul className="dhp-rows">
           {state.snapshot.servers.map(server => (
-            <ServerCard
+            <ServerRow
               key={server.entryId}
               server={server}
               t={t}

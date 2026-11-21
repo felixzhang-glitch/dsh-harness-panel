@@ -1,46 +1,10 @@
 # dsh-harness-panel
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that adds a **Harness** page to Settings — one place to inspect and start/stop MCP servers, enable/disable skills, start/stop hook bridges, and inspect or edit the AGENTS.md instruction chain, styled to match the native settings UI.
+**Harness settings for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).** MCP servers, skills, hooks and the AGENTS.md chain — inspectable, switchable and editable in one panel that looks like it shipped with the app.
 
-English · [中文](#中文)
+![Harness overview](docs/screenshots/overview.png)
 
-## Features
-
-**Overview**
-
-- A landing tab with four health cards — MCP, Skills, Hooks, AGENTS.md — aggregated client-side from the same routes and Remotes the detail pages read; no extra host routes
-- Each card carries a native `StateDot` health tone, a headline count, and up to three attention rows (failed/unavailable servers, hook parse errors, truncated/omitted instruction files, …); clicking a row jumps straight to the owning tab
-- The AGENTS.md card shows a budget-usage bar; one failing source dims its own card, never the page
-
-**MCP**
-
-- Every configured `@deepseek-ai/dsh-mcp-client` row: an available/unavailable badge (green/red) — observed status when the upstream `mcp/status` seam reports one, otherwise inferred from the live row and its registered tools — transport, sanitized target, tool inventory
-- A native start/stop switch on every addressable row, through the same `pluginManager` Remote the built-in Plugins page uses; disabling stops the mcp-client row and its tools
-- One-shot connectivity probe per server (streamable-http `initialize` POST / stdio spawn handshake, 10s deadline)
-- Env/header values never leave the host (keys only, URLs credential-redacted)
-
-**Skills**
-
-- The current session's user-invocable skill catalog — the same seam the composer `/` menu reads (`remote.skills`), so the panel always agrees with the composer
-- A native enable/disable switch per skill. Disabling sets the provider's own frontmatter keys (`user-invocable: false`, `disable-model-invocation: true`) in the skill's SKILL.md, so it leaves the model catalog and the `/` menu in every registry scope; the panel keeps listing it with an off switch, and re-enabling restores the original frontmatter lines
-- Search filter, model-invocable badge, source path
-
-**Hooks**
-
-- Mounted hook bridges (`@deepseek-ai/dsh-hooks-claude-code` / `@deepseek-ai/dsh-hooks-codex`): each row's `configPath` file parsed into event → matcher → command views
-- A per-command switch inside each expanded group: turning one hook off flips its `type` to the sentinel the bridges skip, records the original value, and reloads the bridge row so it takes effect immediately. The bridge row itself deliberately carries no whole-row switch — the loader's live re-enable of a row is unreliable, so the page stays at the granularity the file edit serves
-- Conventional on-disk locations (`~/.claude/settings.json`, `~/.codex/hooks.json`, project-level, …) scanned read-only and clearly marked **not mounted**
-
-**AGENTS.md**
-
-- The workspace-instruction chain the current session loads, in the loader's own order: `$DSH_HOME/AGENTS.md`, `$DSH_AGENTS_HOME/AGENTS.md`, then the project root down to the session working directory, base candidates before each directory's `.local` overlays
-- Every candidate's disposition: loaded, empty, truncated, omitted by the byte budget, duplicate within its candidate group, over the per-source cap, unreadable, or missing. The same budget algorithm the loader uses decides statuses and produces an exact **content that will be injected** preview
-- The active agent preset is resolved through the session projection, the preset's `plugins` list, and the root fallback, so the displayed `maxBytes`/candidate configuration is the one in effect
-- An inline editor per file, backed by a host write route with an allowlisted candidate path, a 1 MiB content cap, and an mtime precondition; saving through `~/.dsh/AGENTS.md -> ~/.agents/AGENTS.md` preserves the symlink. Missing candidates can be created from their directory card
-
-## Design
-
-The visual language follows the shipped settings sections rather than inventing its own: `--dsw-*` design tokens only (no hard-coded colors), native corner radii (`--dsw-radius-xl` cards, `--dsw-radius-md` controls), 0.5px hairline strokes, the underline tab strip used by the built-in Plugins page, and the shipped atoms from `@deepseek-ai/dsh-client-ui-primitives` — `Switch`, `Button`, `Input`, `Toast`, `Tooltip`, `StateDot`, `MarkdownText`, icons, `relativeTime` and `writeClipboard`, the exact controls the native pages use. The AGENTS.md editor has an edit/preview toggle that renders the draft as Markdown. Light and dark themes both work.
+<sub>Screenshots come from the repo's preview harness, rendered against fixture data.</sub>
 
 ## Install
 
@@ -54,44 +18,79 @@ pnpm install
 # restart DSH (the desktop profile has no live reload)
 ```
 
-Or install by local path from Settings → Plugins.
+Or install by local path from Settings → Plugins. Requires DSH `>=0.2.0 <0.3.0`.
+
+## MCP
+
+![MCP servers](docs/screenshots/mcp.png)
+
+- Start/stop any addressable server through the shipped plugin manager — the same switch the built-in Plugins page uses
+- One-shot probe (streamable-http `initialize` POST or stdio spawn, 10s deadline)
+- Transport, sanitized target, tool inventory, reconnect facts; env/header **keys** only, never values
+
+## Skills
+
+![Skills](docs/screenshots/skills.png)
+
+- The session's `/` catalog plus the host's disabled records, so a switched-off skill stays visible with an off switch
+- A switch edits that skill's own `SKILL.md` frontmatter (`user-invocable: false`, `disable-model-invocation: true`), so it leaves the model catalog and the `/` menu in every registry scope
+- Search, model-invocable marker, source path
+
+## Hooks
+
+![Hooks](docs/screenshots/hooks.png)
+
+- Mounted Claude Code / Codex bridges parsed into event → matcher → command
+- Per-command switch: flips that hook's `type` to the sentinel the bridge skips, then reloads the row
+- On-disk configs that exist but are **not** mounted are listed read-only
+
+## AGENTS.md
+
+![AGENTS.md chain](docs/screenshots/agents.png)
+
+- The candidate chain in loader order, every file's disposition spelled out: injected, empty, truncated, omitted, duplicate, over the source cap, unreadable, missing
+- The loader's own budget algorithm, plus a preview of the text that will actually be injected
+- Inline editor on each candidate: allowlisted path, mtime precondition, symlinks written through
+
+## Dark theme
+
+![Overview, dark theme](docs/screenshots/overview-dark.png)
+
+## Design
+
+A status surface, not a dashboard: one framed list per page with hairline rows, tabular figures for counts, monospace for identifiers, semantic color only where something is wrong. Rows are the controls — an expandable row is a button with its switch as a sibling, a whole overview row opens its page, and no "open" control repeats what the row already says. Theme tokens only (`--dsw-*`), so light and dark both work.
 
 ## Security boundary
 
-- MCP and hook bridge switches call the shipped `remote.pluginManager.setPluginEnabled`: the official manager writes the profile's `cordis.patch.yml` and reloads the row, exactly as the built-in Plugins page does. This host half registers no write route for them
-- The host half's write routes are `POST /harness-panel/skills/toggle`, `POST /harness-panel/hooks/toggle-hook`, and `POST /harness-panel/agents/write`. Each requires `content-type: application/json`, an `x-harness-panel: 1` header, and a same-origin `Origin` when the browser sends one; the toggle bodies are bounded to 16 KiB and the AGENTS.md body to 4 MiB
-- A skill toggle edits only the two invocation keys of the named skill's own SKILL.md (verified against the file's declared name); a hook toggle edits only that command's `type`; an AGENTS.md write is refused unless the path is a candidate discovered for the requested working directory, and its `expectedMtimeMs` must match the file on disk. Symlinked candidates are written through so the link survives, but a resolved target outside the project root or either instruction home is refused
-- The host writes only those file edits plus `$DSH_HOME/harness-panel/state.json` (default `~/.dsh/harness-panel/state.json`): skill names, descriptions, paths, disable times, and the original frontmatter/type lines, mode 0600. No instruction bodies, no credentials
-- AGENTS.md discovery reads with the host's Node filesystem, not the agent's sandboxed `ctx.fs` provider; file content is returned only to the same-origin panel and is never logged
-- Credentials never leave the host: env/header maps surface as key lists, URLs and error text are redacted
-- Routes bind to loopback only (the dsh webserver default)
+- MCP and hook-bridge switches call the shipped `remote.pluginManager.setPluginEnabled`; this plugin registers no write route for them
+- Write routes are `POST /harness-panel/skills/toggle`, `/hooks/toggle-hook` and `/agents/write` — each needs JSON, `x-harness-panel: 1` and a same-origin `Origin`; bodies are capped (16 KiB / 4 MiB)
+- A skill toggle touches only the two invocation keys of that skill's own file; a hook toggle only that command's `type`; an AGENTS.md write only a candidate discovered for the requested working directory, with a matching mtime
+- Host state is limited to those edits plus `$DSH_HOME/harness-panel/state.json` (0600, names and original lines, no bodies, no credentials)
+- Credentials never leave the host: env/header maps surface as key lists, URLs and errors are redacted; routes bind to loopback
 
 ## Development
 
 ```bash
 pnpm install
-pnpm build       # emits lib/index.js (host ESM) + lib/client.js (browser bundle)
 pnpm typecheck
-pnpm test        # vitest: overview aggregation, mcp aggregation, hooks parsing, AGENTS.md discovery/render/file edits, sanitization, skill file/state, route gates, switch models, locale parity
-node tests/smoke-client-bundle.mjs   # after build: execute the built client bundle's factory + apply() against stubbed externals
+pnpm test                     # aggregation, parsing, routes, gates, locale parity
+pnpm build                    # lib/index.js (host) + lib/client.js (browser)
+node tests/smoke-client-bundle.mjs
+bun preview/build.ts          # visual harness → preview/dist/index.html
 ```
 
-The scripts prefer `bunx` and fall back to the local Node. On the macOS desktop install the DSH-bundled Node is hardened and cannot load the ad-hoc native rollup/rolldown bindings, so `bunx tsdown` / `bunx vitest run` is the path that works there.
-
-Compatibility: DSH `>=0.2.0 <0.3.0` (developed against desktop 0.2.1-rc.1). AGENTS.md discovery, dedupe and budget rendering mirror `@deepseek-ai/dsh-agent-instructions` 0.2.1-rc.2; if a later loader changes those semantics, the panel needs the same adjustment.
+`preview/` mounts the real section against fixtures with stand-in atoms — see [preview/README.md](preview/README.md) for the query flags and how the token sheets are vendored.
 
 ---
 
 ## 中文
 
-DeepSeek Harness 设置面板插件：在设置导航中新增 **Harness** 入口，集中查看并启停 MCP 服务器、Skills 与 Hooks，并查看/编辑 AGENTS.md 指令链，视觉与原生设置页一致。
+DeepSeek Harness 设置面板：MCP 服务器、Skills、Hooks 与 AGENTS.md 指令链一处查看、启停与编辑，视觉与原生设置页一致。
 
-- **总览**：落地页四张健康卡（MCP / Skills / Hooks / AGENTS.md），客户端聚合各详情页同源的路由与 Remote，不加 host 路由；每卡带原生 `StateDot` 健康色、 headline 计数与至多三条关注行（失败/不可用服务器、hook 解析错误、被截断/省略的指令文件等），点击直达对应 tab；AGENTS.md 卡显示预算占用条；单个数据源失败只置灰自己的卡片，不拖垮整页
-- **MCP**：已配置服务器的状态徽章显示「可用 / 不可用」（绿 / 红）——收到上游 `mcp/status` 事件时按事件状态显示，无事件时按该行是否已激活及已注册工具推断；同时展示传输方式、脱敏目标、工具清单，一键探活；每个可寻址行右侧有原生启停开关，停用后 mcp-client 行与其工具一起下线
-- **Skills**：当前会话可见的 skill 目录（与 `/` 菜单同源），每个 skill 右侧有原生启用/停用开关。停用直接写入该 skill SKILL.md 的官方 frontmatter 键（`user-invocable: false`、`disable-model-invocation: true`），在任何 registry scope 都生效，skill 从模型目录与 `/` 菜单消失；面板仍以关闭状态列出，重新启用时按记录还原原始行
-- **Hooks**：已挂载的 hook 桥配置解析（事件点 → 匹配器 → 命令），展开后**每条 command 有独立开关**——关闭时把该 hook 的 `type` 改为 bridge 跳过的哨兵值（provider 自身的机制），记录原始值并重载 bridge 行立即生效。bridge 整行不设总开关：loader 对整行的热恢复不可靠，面板停留在文件编辑能服务的粒度。本机约定路径上**未挂载**的配置文件继续只读扫描
-- **AGENTS.md**：按 loader 的真实顺序展示当前会话的指令链（`$DSH_HOME/AGENTS.md` → `$DSH_AGENTS_HOME/AGENTS.md` → 项目根到会话工作目录，每层先基础候选再 `.local` 覆盖），标注每个候选的最终去向：已注入、空文件、被截断、因预算省略、同组重复折叠、超过单文件上限、不可读或未创建。预算与去重按 `dsh-agent-instructions` 0.2.x 的算法复刻，并给出**将注入内容**的完整预览；当前 preset 通过会话投影与 preset `plugins` 解析，显示实际生效的 `maxBytes` 与候选配置。每个文件有内联编辑器，保存走候选路径白名单 + 1 MiB 内容上限 + mtime 前置校验；`~/.dsh/AGENTS.md -> ~/.agents/AGENTS.md` 这类符号链接写穿目标而保留链接，缺失候选可在对应目录卡片中新建
+- **总览**：一屏状态表，四行给出状态词、精确规模与待处理项；整行即入口
+- **MCP**：状态、传输、脱敏目标、工具清单；通过官方 plugin manager 启停；一键探活
+- **Skills**：与会话 `/` 菜单同源的目录；开关直接改该 skill 的 SKILL.md 前置元数据
+- **Hooks**：已挂载桥的事件 → 匹配器 → 命令；每条命令独立开关；未挂载配置只读列出
+- **AGENTS.md**：按 loader 顺序展示指令链与每个候选的去向，内联编辑，mtime 校验
 
-安全边界：MCP 与 hook 开关调用 shipped `remote.pluginManager.setPluginEnabled`，由官方 manager 写 profile 的 `cordis.patch.yml` 并 reload，与内置 Plugins 页一致；host 的写入路由为 `POST /harness-panel/skills/toggle`、`POST /harness-panel/hooks/toggle-hook` 与 `POST /harness-panel/agents/write`，均要求 JSON、`x-harness-panel: 1` 与同源 `Origin`，开关类 body 上限 16 KiB，AGENTS.md 写入上限 4 MiB。skill 开关只改目标 SKILL.md 的两个 invocation 键（先校验声明的 skill name），hook 开关只改该命令的 `type`；AGENTS.md 写入只接受本次按请求工作目录发现出的候选路径，且 `expectedMtimeMs` 必须与磁盘一致；符号链接写穿目标，但目标落在项目根或两个指令 home 之外时拒绝写入。host 写出的文件仅这些编辑与 `$DSH_HOME/harness-panel/state.json`（默认 `~/.dsh/harness-panel/state.json`，0600），state 文件只含 skill 名称、描述、路径、停用时间与原始行记录，不含正文与凭据。AGENTS.md 发现与读取使用 host 的 Node 文件系统而非 agent 沙箱 provider；文件内容只返回给同源面板，不写日志。路由仅监听 loopback。
-
-开发命令见上文；安装或重新构建后需重启 DSH（desktop profile 无 live reload）。
+安装：在 desktop profile 的 `package.json` 加依赖与 `dsh.profile.bundles`，`pnpm install` 后重启 DSH。要求 DSH `>=0.2.0 <0.3.0`。设计取向：状态面而非仪表盘——发丝分隔的列表、等宽数字、只在出错处用语义色，行本身就是控件；只用 `--dsw-*` token，亮暗皆可。

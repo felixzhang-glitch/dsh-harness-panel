@@ -16,6 +16,7 @@ import { Button, IconSearchOutlineRegular, Input, Switch } from '@deepseek-ai/ds
 import { currentSessionId, fetchJson, fill, postJson, type Translate } from './shared.ts'
 import { CopyButton, RefreshButton } from './controls.tsx'
 import { PanelToastView, usePanelToast } from './toast.tsx'
+import { useResumeRefresh } from './use-resume-refresh.ts'
 import {
   filterSkillRows,
   mergeSkillRows,
@@ -81,7 +82,12 @@ function delay(ms: number): Promise<void> {
 }
 
 /** The Skills page body. */
-export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: SkillsPageDeps }): JSX.Element {
+export function SkillsPage({ t, deps, active }: {
+  readonly t: Translate
+  readonly deps: SkillsPageDeps
+  /** Whether this panel is the selected tab; selecting it again re-reads. */
+  readonly active: boolean
+}): JSX.Element {
   const [state, setState] = useState<ViewState>({ status: 'loading' })
   const [query, setQuery] = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -159,6 +165,10 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
     return () => { controller.abort() }
   }, [run])
 
+  // The catalog follows a file the rest of the panel can edit; re-read on resume.
+  const refreshQuietly = useCallback((): void => { run(false) }, [run])
+  useResumeRefresh(active, refreshQuietly)
+
   const rows = useMemo(
     () => state.status === 'ready' ? mergeSkillRows(state.enabled, state.disabled) : [],
     [state],
@@ -234,7 +244,7 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
   return (
     <>
       <div className="dhp-toolbar">
-        <p className="dhp-sub">{summary}</p>
+        <p className="dhp-meta">{summary}</p>
         <RefreshButton t={t} busy={refreshing} onClick={() => { run(true) }} />
       </div>
       <Input
@@ -261,48 +271,52 @@ export function SkillsPage({ t, deps }: { readonly t: Translate; readonly deps: 
         <div className="dhp-skeleton" aria-label={t('loading')}>
           <span className="dhp-skeleton-bar" />
           <span className="dhp-skeleton-bar" />
+          <span className="dhp-skeleton-bar" />
         </div>
       ) : state.status === 'error' ? (
         <>
           <p className="dhp-error" role="alert">
             {t('error')} · {state.message === 'skills-unavailable' ? t('skillsUnavailable') : state.message}
           </p>
-          <div><Button size="sm" onClick={() => { run(true) }}>{t('retry')}</Button></div>
+          <div className="dhp-actions"><Button size="sm" onClick={() => { run(true) }}>{t('retry')}</Button></div>
         </>
       ) : filtered.length === 0 ? (
-        state.session === 'ok' ? <p className="dhp-state">{t('skillsEmpty')}</p> : null
+        state.session === 'ok' ? <p className="dhp-empty">{t('skillsEmpty')}</p> : null
       ) : (
-        <div className="dhp-card">
+        <ul className="dhp-rows">
           {filtered.map(skill => (
-            <div key={skill.name} className="dhp-skill" data-disabled={skill.enabled ? undefined : 'true'}>
-              <div className="dhp-skill-row">
-                <span className="dhp-skill-name">{skill.name}</span>
-                <span className="dhp-skill-trailing">
-                  {skill.enabled && skill.modelInvocable ? (
-                    <span className="dhp-badge" data-tone="accent">{t('skillModel')}</span>
+            <li key={skill.name} className="dhp-row" data-off={skill.enabled ? undefined : 'true'}>
+              <div className="dhp-row-head">
+                <div className="dhp-row-main">
+                  <div className="dhp-row-line">
+                    <span className="dhp-row-title" data-mono="true">{skill.name}</span>
+                    <span className="dhp-row-end">
+                      {/* Only the exception is marked: a model-invocable skill is the norm. */}
+                      {skill.modelInvocable ? null : <span className="dhp-tag">{t('skillUserOnly')}</span>}
+                      {skill.enabled ? null : <span className="dhp-tag">{t('statusDisabled')}</span>}
+                      <Switch
+                        checked={skill.enabled}
+                        label={fill(t('skillToggle'), { name: skill.name })}
+                        disabled={!state.fileControlAvailable || busy !== null}
+                        {...state.fileControlAvailable ? {} : { title: t('skillsFileControlUnavailable') }}
+                        onChange={(next) => { onToggle(skill, next) }}
+                      />
+                    </span>
+                  </div>
+                  {skill.description !== ''
+                    ? <span className="dhp-row-sub" title={skill.description}>{skill.description}</span>
+                    : null}
+                  {skill.path !== undefined && skill.path !== '' ? (
+                    <span className="dhp-pathrow">
+                      <span className="dhp-row-sub dhp-code">{skill.path}</span>
+                      <CopyButton text={skill.path} label={t('copyPath')} />
+                    </span>
                   ) : null}
-                  {!skill.enabled ? (
-                    <span className="dhp-badge" data-tone="muted">{t('statusDisabled')}</span>
-                  ) : null}
-                  <Switch
-                    checked={skill.enabled}
-                    label={fill(t('skillToggle'), { name: skill.name })}
-                    disabled={!state.fileControlAvailable || busy !== null}
-                    {...state.fileControlAvailable ? {} : { title: t('skillsFileControlUnavailable') }}
-                    onChange={(next) => { onToggle(skill, next) }}
-                  />
-                </span>
+                </div>
               </div>
-              {skill.description !== '' ? <span className="dhp-card-sub">{skill.description}</span> : null}
-              {skill.path !== undefined && skill.path !== '' ? (
-                <span className="dhp-skill-pathrow">
-                  <span className="dhp-card-sub dhp-code">{skill.path}</span>
-                  <CopyButton text={skill.path} label={t('copyPath')} />
-                </span>
-              ) : null}
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
       <PanelToastView toast={toast} onDone={dismiss} />
     </>

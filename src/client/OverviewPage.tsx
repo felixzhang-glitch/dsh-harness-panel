@@ -1,24 +1,15 @@
 /**
- * The Overview page: four health cards (MCP / Skills / Hooks / AGENTS.md)
- * aggregated client-side from the same routes and Remotes the detail pages
- * read. Each source settles independently — one failing route dims its own
- * card, never the page. Attention rows jump straight to the owning tab.
+ * The Overview page: a four-row status board over the same routes and Remotes
+ * the detail pages read. Each source settles independently — one failing route
+ * degrades its own row, never the board. A row is the navigation target; the
+ * findings it lists are the same destination, so they are text, not controls.
  *
  * @module dsh-harness-panel/client/OverviewPage
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
-import {
-  Button,
-  IconApiOutlineRegular,
-  IconChevronRightOutlineRegular,
-  IconCodeOutlineRegular,
-  IconContextInjectionOutlineRegular,
-  IconSkillOutlineRegular,
-  StateDot,
-  type StateDotState,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { RefreshButton } from './controls.tsx'
 import type { McpSnapshot } from '../mcp.ts'
 import type { HooksSnapshot } from '../hooks.ts'
 import type { AgentsSnapshot } from '../agents-contract.ts'
@@ -38,8 +29,8 @@ import {
 } from './overview-model.ts'
 import type { DisabledSkillLike } from './skills-model.ts'
 import type { SkillsRemoteFace } from './SkillsPage.tsx'
-import { currentSessionId, fetchJson, fill, formatBytes, type Translate } from './shared.ts'
-import { RefreshButton } from './controls.tsx'
+import { currentSessionId, fetchJson, fill, formatBytes, formatClock, type Translate } from './shared.ts'
+import { useResumeRefresh } from './use-resume-refresh.ts'
 
 /** Services the page reads, bound by the plugin's apply closure. */
 export interface OverviewPageDeps {
@@ -64,7 +55,7 @@ const ISSUE_KEY: Record<OverviewIssueKind, HarnessPanelLocaleKey> = {
   'agents-over-limit': 'issueAgentsOverLimit',
 }
 
-/** Card title key per page id. */
+/** Row title key per page id. */
 const TITLE_KEY: Record<OverviewPageId, HarnessPanelLocaleKey> = {
   mcp: 'overviewMcpTitle',
   skills: 'overviewSkillsTitle',
@@ -72,12 +63,12 @@ const TITLE_KEY: Record<OverviewPageId, HarnessPanelLocaleKey> = {
   agents: 'overviewAgentsTitle',
 }
 
-/** Native StateDot semantics per card tone. */
-const DOT_STATE: Record<OverviewTone, StateDotState> = {
-  ok: 'done',
-  warn: 'warning',
-  error: 'error',
-  muted: 'idle',
+/** State word per tone; the metric line under it says why a row is quiet. */
+const STATE_KEY: Record<OverviewTone, HarnessPanelLocaleKey> = {
+  ok: 'statusOk',
+  warn: 'statusAttention',
+  error: 'statusError',
+  muted: 'statusMuted',
 }
 
 /** Settle one promise into state unless the load was aborted or unmounted. */
@@ -96,10 +87,10 @@ async function settleInto<T>(
   }
 }
 
-/** Load the skills card input: session catalog plus the host disabled records. */
+/** Load the skills row input: session catalog plus the host disabled records. */
 async function loadSkillsInput(deps: OverviewPageDeps, signal: AbortSignal): Promise<OverviewSkillsInput> {
   // The disabled snapshot is independent of the session catalog; a missing
-  // route leaves the card showing the catalog alone.
+  // route leaves the row showing the catalog alone.
   const hostPromise = fetchJson<{ disabled: readonly DisabledSkillLike[] }>('/harness-panel/skills', signal)
     .catch((): { disabled: readonly DisabledSkillLike[] } => ({ disabled: [] }))
   const remote = deps.skills
@@ -118,211 +109,213 @@ async function loadSkillsInput(deps: OverviewPageDeps, signal: AbortSignal): Pro
   return { session: 'ok', enabled: result.value.skills, disabled: host.disabled }
 }
 
-/** One attention row; clicking opens the owning detail tab. */
-function IssueRow({ issue, t, onOpen }: {
+/** One finding line: severity dot, kind, and the subject's identifier. */
+function Finding({ issue, t }: {
   readonly issue: OverviewIssue
   readonly t: Translate
-  readonly onOpen: () => void
 }): JSX.Element {
   return (
+    <span className="dhp-finding" data-severity={issue.severity}>
+      <span className="dhp-finding-label">{t(ISSUE_KEY[issue.kind])}</span>
+      {issue.name === '' ? null : <span className="dhp-finding-name">{issue.name}</span>}
+    </span>
+  )
+}
+
+/**
+ * The findings under one row: failures and warnings only, three lines plus an
+ * overflow count. Intentional states (a disabled skill) are already counted in
+ * the row's metrics and would only add noise here.
+ */
+function Findings({ issues, t }: {
+  readonly issues: readonly OverviewIssue[]
+  readonly t: Translate
+}): JSX.Element | null {
+  const actionable = issues.filter(issue => issue.severity !== 'info')
+  if (actionable.length === 0) return null
+  return (
+    <span className="dhp-board-findings">
+      {actionable.slice(0, 3).map(issue => <Finding key={issue.key} issue={issue} t={t} />)}
+      {actionable.length > 3
+        ? <span className="dhp-finding-more">{fill(t('overviewMoreIssues'), { count: actionable.length - 3 })}</span>
+        : null}
+    </span>
+  )
+}
+
+/** One board row: name, state, metrics, findings — the whole row navigates. */
+function BoardRow({ page, tone, status, message, findings, children, t, onNavigate }: {
+  readonly page: OverviewPageId
+  readonly tone: OverviewTone
+  readonly status: 'loading' | 'error' | 'ready'
+  readonly message: string | null
+  readonly findings: readonly OverviewIssue[]
+  readonly children: ReactNode
+  readonly t: Translate
+  readonly onNavigate: (page: OverviewPageId) => void
+}): JSX.Element {
+  const stateTone: OverviewTone = status === 'ready' ? tone : status === 'error' ? 'error' : 'muted'
+  const stateLabel = status === 'loading' ? t('loading') : status === 'error' ? t('error') : t(STATE_KEY[tone])
+  return (
     <li>
-      <button type="button" className="dhp-ov-issue" data-severity={issue.severity} onClick={onOpen}>
-        <span className="dhp-dot" />
-        <span className="dhp-ov-issue-label">{t(ISSUE_KEY[issue.kind])}</span>
-        {issue.name !== '' ? <span className="dhp-ov-issue-name dhp-code">{issue.name}</span> : null}
+      <button
+        type="button"
+        className="dhp-board-row"
+        onClick={() => { onNavigate(page) }}
+      >
+        <span className="dhp-board-name">{t(TITLE_KEY[page])}</span>
+        <span className="dhp-board-state">
+          <span className="dhp-state" data-tone={stateTone}>
+            <span className="dhp-dot" />
+            {stateLabel}
+          </span>
+        </span>
+        <span className="dhp-board-metrics">
+          {status === 'loading'
+            ? null
+            : status === 'error'
+              ? <span className="dhp-error">{message}</span>
+              : children}
+        </span>
+        {status === 'ready' ? <Findings issues={findings} t={t} /> : null}
       </button>
     </li>
   )
 }
 
-/** The card's attention list, capped at three rows plus an overflow hint. */
-function IssueList({ issues, t, onOpen }: {
-  readonly issues: readonly OverviewIssue[]
-  readonly t: Translate
-  readonly onOpen: () => void
-}): JSX.Element | null {
-  if (issues.length === 0) return null
-  return (
-    <ul className="dhp-ov-issues">
-      {issues.slice(0, 3).map(issue => (
-        <IssueRow key={issue.key} issue={issue} t={t} onOpen={onOpen} />
-      ))}
-      {issues.length > 3 ? (
-        <li className="dhp-hint dhp-ov-more">{fill(t('overviewMoreIssues'), { count: issues.length - 3 })}</li>
-      ) : null}
-    </ul>
-  )
-}
-
-/** The card chrome: icon seat, title, health dot, body, and the open footer. */
-function CardShell({ page, tone, loading, icon, t, onNavigate, children }: {
-  readonly page: OverviewPageId
-  readonly tone: OverviewTone
-  readonly loading: boolean
-  readonly icon: ReactNode
-  readonly t: Translate
-  readonly onNavigate: (page: OverviewPageId) => void
-  readonly children: ReactNode
-}): JSX.Element {
-  return (
-    <section className="dhp-ov-card" data-tone={tone} aria-label={t(TITLE_KEY[page])}>
-      <div className="dhp-ov-head">
-        <span className="dhp-ov-icon">{icon}</span>
-        <span className="dhp-ov-title">{t(TITLE_KEY[page])}</span>
-        <StateDot state={loading ? 'ongoing' : DOT_STATE[tone]} />
-      </div>
-      {children}
-      <div className="dhp-ov-footer">
-        <Button size="sm" className="dhp-ov-open" onClick={() => { onNavigate(page) }}>
-          {t('overviewOpen')}
-          <IconChevronRightOutlineRegular />
-        </Button>
-      </div>
-    </section>
-  )
-}
-
-/** Loading / error body shared by every card. */
-function CardStateBody({ status, message, t }: {
-  readonly status: 'loading' | 'error' | 'ready'
-  readonly message: string | null
-  readonly t: Translate
-}): JSX.Element | null {
-  if (status === 'loading') {
-    return (
-      <div className="dhp-skeleton" aria-label={t('loading')}>
-        <span className="dhp-skeleton-bar" />
-        <span className="dhp-skeleton-bar" />
-      </div>
-    )
-  }
-  if (status === 'error') {
-    return <p className="dhp-error" role="alert">{t('error')} · {message}</p>
-  }
-  return null
-}
-
-/** The MCP health card. */
-function McpCard({ card, t, onNavigate }: {
+/** The MCP row: availability against the configured fleet, in tools. */
+function McpRow({ card, t, onNavigate }: {
   readonly card: McpOverviewCard
   readonly t: Translate
   readonly onNavigate: (page: OverviewPageId) => void
 }): JSX.Element {
-  const open = (): void => { onNavigate('mcp') }
   return (
-    <CardShell page="mcp" tone={card.tone} loading={card.status === 'loading'} icon={<IconApiOutlineRegular />} t={t} onNavigate={onNavigate}>
-      <CardStateBody status={card.status} message={card.message} t={t} />
-      {card.status === 'ready' ? (
-        <>
-          <p className="dhp-ov-headline">
-            {card.total === 0 ? t('overviewMcpEmpty') : fill(t('overviewMcpHeadline'), { available: card.available, total: card.total })}
-          </p>
-          <p className="dhp-ov-facts">
-            {fill(t('toolCount'), { count: card.tools })}
-            {card.total - card.enabled > 0 ? ` · ${fill(t('overviewDisabled'), { count: card.total - card.enabled })}` : ''}
-          </p>
-          <IssueList issues={card.issues} t={t} onOpen={open} />
-        </>
-      ) : null}
-    </CardShell>
+    <BoardRow
+      page="mcp"
+      tone={card.tone}
+      status={card.status}
+      message={card.message}
+      findings={card.issues}
+      t={t}
+      onNavigate={onNavigate}
+    >
+      {card.total === 0
+        ? t('overviewMcpEmpty')
+        : [
+            fill(t('overviewMcpServers'), { count: card.total }),
+            fill(t('overviewMcpAvailable'), { count: card.available }),
+            fill(t('toolCount'), { count: card.tools }),
+            ...card.total - card.enabled > 0 ? [fill(t('overviewDisabled'), { count: card.total - card.enabled })] : [],
+          ].join(' · ')}
+    </BoardRow>
   )
 }
 
-/** The Skills health card. */
-function SkillsCard({ card, t, onNavigate }: {
+/** The Skills row: the session catalog against the disabled records. */
+function SkillsRow({ card, t, onNavigate }: {
   readonly card: SkillsOverviewCard
   readonly t: Translate
   readonly onNavigate: (page: OverviewPageId) => void
 }): JSX.Element {
-  const open = (): void => { onNavigate('skills') }
-  const sessionNote = card.session === 'no-session'
+  const line = card.session === 'no-session'
     ? t('overviewNoSession')
     : card.session === 'unavailable'
       ? t('overviewUnavailable')
-      : null
+      : card.total === 0
+        ? t('overviewSkillsEmpty')
+        // total − enabled is the disabled count; stating it twice adds nothing.
+        : fill(t('overviewSkillsRatio'), { enabled: card.enabled, total: card.total })
   return (
-    <CardShell page="skills" tone={card.tone} loading={card.status === 'loading'} icon={<IconSkillOutlineRegular />} t={t} onNavigate={onNavigate}>
-      <CardStateBody status={card.status} message={card.message} t={t} />
-      {card.status === 'ready' ? (
-        <>
-          <p className="dhp-ov-headline">
-            {card.total === 0 && card.session === 'ok' ? t('overviewSkillsEmpty') : fill(t('overviewSkillsHeadline'), { enabled: card.enabled, total: card.total })}
-          </p>
-          <p className="dhp-ov-facts">
-            {sessionNote ?? (card.disabled > 0 ? fill(t('overviewDisabled'), { count: card.disabled }) : t('overviewAllGood'))}
-          </p>
-          <IssueList issues={card.issues} t={t} onOpen={open} />
-        </>
-      ) : null}
-    </CardShell>
+    <BoardRow
+      page="skills"
+      tone={card.tone}
+      status={card.status}
+      message={card.message}
+      findings={card.issues}
+      t={t}
+      onNavigate={onNavigate}
+    >
+      {line}
+    </BoardRow>
   )
 }
 
-/** The Hooks health card. */
-function HooksCard({ card, t, onNavigate }: {
+/** The Hooks row: active commands against the mounted bridges. */
+function HooksRow({ card, t, onNavigate }: {
   readonly card: HooksOverviewCard
   readonly t: Translate
   readonly onNavigate: (page: OverviewPageId) => void
 }): JSX.Element {
-  const open = (): void => { onNavigate('hooks') }
   return (
-    <CardShell page="hooks" tone={card.tone} loading={card.status === 'loading'} icon={<IconCodeOutlineRegular />} t={t} onNavigate={onNavigate}>
-      <CardStateBody status={card.status} message={card.message} t={t} />
-      {card.status === 'ready' ? (
-        <>
-          <p className="dhp-ov-headline">
-            {card.bridges === 0 ? t('overviewHooksEmpty') : fill(t('overviewHooksHeadline'), { active: card.activeHooks, total: card.totalHooks })}
-          </p>
-          <p className="dhp-ov-facts">
-            {fill(t('overviewHooksBridges'), { count: card.bridges })}
-            {card.disabledHooks > 0 ? ` · ${fill(t('overviewDisabled'), { count: card.disabledHooks })}` : ''}
-          </p>
-          <IssueList issues={card.issues} t={t} onOpen={open} />
-        </>
-      ) : null}
-    </CardShell>
+    <BoardRow
+      page="hooks"
+      tone={card.tone}
+      status={card.status}
+      message={card.message}
+      findings={card.issues}
+      t={t}
+      onNavigate={onNavigate}
+    >
+      {card.bridges === 0
+        ? t('overviewHooksEmpty')
+        : [
+            fill(t('overviewHooksBridges'), { count: card.bridges }),
+            fill(t('overviewHooksRatio'), { active: card.activeHooks, total: card.totalHooks }),
+            ...card.disabledHooks > 0 ? [fill(t('overviewDisabled'), { count: card.disabledHooks })] : [],
+          ].join(' · ')}
+    </BoardRow>
   )
 }
 
-/** The AGENTS.md health card with its budget bar. */
-function AgentsCard({ card, t, onNavigate }: {
+/** The AGENTS.md row: the injected instruction budget. */
+function AgentsRow({ card, t, onNavigate }: {
   readonly card: AgentsOverviewCard
   readonly t: Translate
   readonly onNavigate: (page: OverviewPageId) => void
 }): JSX.Element {
-  const open = (): void => { onNavigate('agents') }
   const percent = card.maxBytes !== null && card.maxBytes > 0
     ? Math.round((card.renderedBytes / card.maxBytes) * 100)
     : null
+  // The gauge exists to warn; a budget with room left is stated in numbers only.
+  const tight = percent !== null && percent >= 75
   return (
-    <CardShell page="agents" tone={card.tone} loading={card.status === 'loading'} icon={<IconContextInjectionOutlineRegular />} t={t} onNavigate={onNavigate}>
-      <CardStateBody status={card.status} message={card.message} t={t} />
-      {card.status === 'ready' ? (
-        <>
-          <p className="dhp-ov-headline">
-            {card.maxBytes === null
-              ? t('agentsStatusNotLoaded')
-              : `${formatBytes(card.renderedBytes)} / ${formatBytes(card.maxBytes)}`}
-          </p>
-          {percent !== null ? (
-            <div className="dhp-ov-bar" role="img" aria-label={fill(t('overviewBudget'), { percent })}>
-              <span className="dhp-ov-bar-fill" data-hot={percent > 90 ? 'true' : undefined} style={{ width: `${Math.min(100, percent)}%` }} />
-            </div>
-          ) : null}
-          <p className="dhp-ov-facts">
-            {card.injecting ? fill(t('overviewAgentsFiles'), { count: card.loadedFiles }) : t('issueAgentsNotInjecting')}
-          </p>
-          <IssueList issues={card.issues} t={t} onOpen={open} />
-        </>
+    <BoardRow
+      page="agents"
+      tone={card.tone}
+      status={card.status}
+      message={card.message}
+      findings={card.issues}
+      t={t}
+      onNavigate={onNavigate}
+    >
+      {card.maxBytes === null
+        ? t('agentsStatusNotLoaded')
+        : [
+            `${formatBytes(card.renderedBytes)} / ${formatBytes(card.maxBytes)}`,
+            ...percent === null ? [] : [fill(t('overviewBudgetShare'), { percent })],
+            fill(t('overviewAgentsFiles'), { count: card.loadedFiles }),
+          ].join(' · ')}
+      {tight ? (
+        <span className="dhp-budget" role="img" aria-label={fill(t('overviewBudget'), { percent: percent ?? 0 })}>
+          <span className="dhp-budget-track">
+            <span
+              className="dhp-budget-fill"
+              data-hot={percent >= 90 ? 'true' : undefined}
+              style={{ width: `${Math.min(100, percent ?? 0)}%` }}
+            />
+          </span>
+        </span>
       ) : null}
-    </CardShell>
+    </BoardRow>
   )
 }
 
 /** The Overview page body. */
-export function OverviewPage({ t, deps, onNavigate }: {
+export function OverviewPage({ t, deps, active, onNavigate }: {
   readonly t: Translate
   readonly deps: OverviewPageDeps
+  /** Whether this panel is the selected tab; selecting it again re-reads. */
+  readonly active: boolean
   readonly onNavigate: (page: OverviewPageId) => void
 }): JSX.Element {
   const [mcp, setMcp] = useState<Settled<McpSnapshot>>({ status: 'loading' })
@@ -330,6 +323,7 @@ export function OverviewPage({ t, deps, onNavigate }: {
   const [skills, setSkills] = useState<Settled<OverviewSkillsInput>>({ status: 'loading' })
   const [agents, setAgents] = useState<Settled<AgentsSnapshot>>({ status: 'loading' })
   const [refreshing, setRefreshing] = useState(false)
+  const [readAt, setReadAt] = useState<number | null>(null)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -349,6 +343,7 @@ export function OverviewPage({ t, deps, onNavigate }: {
       settleInto(loadSkillsInput(deps, signal), setSkills, signal, isMounted),
       settleInto(fetchJson<AgentsSnapshot>(`/harness-panel/agents?${params.toString()}`, signal), setAgents, signal, isMounted),
     ])
+    if (!signal.aborted && isMounted()) setReadAt(Date.now())
   }, [deps])
 
   useEffect(() => {
@@ -356,6 +351,13 @@ export function OverviewPage({ t, deps, onNavigate }: {
     void loadAll(controller.signal)
     return () => { controller.abort() }
   }, [loadAll])
+
+  // The board is a live read of state this panel edits; re-read it whenever the
+  // tab becomes the selected one again.
+  const refreshQuietly = useCallback((): void => {
+    void loadAll(new AbortController().signal)
+  }, [loadAll])
+  useResumeRefresh(active, refreshQuietly)
 
   const onRefresh = useCallback((): void => {
     setRefreshing(true)
@@ -367,24 +369,36 @@ export function OverviewPage({ t, deps, onNavigate }: {
 
   const model = buildOverview({ mcp, hooks, skills, agents })
   const [mcpCard, skillsCard, hooksCard, agentsCard] = model.cards
+  // The count wears the worst tone on the board, not its own attention total.
+  const worst: 'error' | 'warn' | undefined = model.cards.some(card => card.tone === 'error')
+    ? 'error'
+    : model.attention > 0 ? 'warn' : undefined
 
   return (
     <>
       <div className="dhp-toolbar">
-        <p className="dhp-sub" role="status">
+        <p className="dhp-meta" data-tone={worst} role="status">
           {model.allReady
             ? model.attention > 0
-              ? fill(t('overviewAttention'), { count: model.attention })
+              ? <strong>{fill(t('overviewAttention'), { count: model.attention })}</strong>
               : t('overviewAllGood')
-            : ''}
+            : t('loading')}
+          {readAt === null ? null : <span>{fill(t('overviewReadAt'), { time: formatClock(readAt) })}</span>}
         </p>
         <RefreshButton t={t} busy={refreshing} onClick={onRefresh} />
       </div>
-      <div className="dhp-overview-grid">
-        <McpCard card={mcpCard} t={t} onNavigate={onNavigate} />
-        <SkillsCard card={skillsCard} t={t} onNavigate={onNavigate} />
-        <HooksCard card={hooksCard} t={t} onNavigate={onNavigate} />
-        <AgentsCard card={agentsCard} t={t} onNavigate={onNavigate} />
+      <div className="dhp-board">
+        <div className="dhp-board-head" aria-hidden="true">
+          <span>{t('overviewColumnSubsystem')}</span>
+          <span>{t('overviewColumnState')}</span>
+          <span>{t('overviewColumnScale')}</span>
+        </div>
+        <ul className="dhp-board-list">
+          <McpRow card={mcpCard} t={t} onNavigate={onNavigate} />
+          <SkillsRow card={skillsCard} t={t} onNavigate={onNavigate} />
+          <HooksRow card={hooksCard} t={t} onNavigate={onNavigate} />
+          <AgentsRow card={agentsCard} t={t} onNavigate={onNavigate} />
+        </ul>
       </div>
     </>
   )
